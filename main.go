@@ -91,46 +91,30 @@ func convertToTimestamp(t time.Time) float64 {
 	return t.Sub(coreDataEpoch).Seconds()
 }
 
+// 履歴取得用のベースクエリ
+const historyBaseQuery = `
+	SELECT
+		hi.url,
+		COALESCE(hv.title, '') as title,
+		COALESCE(hi.domain_expansion, '') as domain,
+		hv.visit_time
+	FROM history_visits hv
+	JOIN history_items hi ON hv.history_item = hi.id
+	WHERE 1=1`
+
 // getRecentVisits は最近の訪問履歴を取得
 func getRecentVisits(db *sql.DB, limit int, filter SearchFilter) ([]HistoryVisit, error) {
-	query := `
-		SELECT
-			hi.url,
-			COALESCE(hv.title, '') as title,
-			COALESCE(hi.domain_expansion, '') as domain,
-			hv.visit_time
-		FROM history_visits hv
-		JOIN history_items hi ON hv.history_item = hi.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
+	qb := NewQueryBuilder(historyBaseQuery).
+		WithFilter(filter).
+		OrderByDesc("hv.visit_time").
+		Limit(limit)
 
-	// キーワード検索
-	if filter.Keyword != "" {
-		query += ` AND (hi.url LIKE ? OR hv.title LIKE ?)`
-		keyword := "%" + filter.Keyword + "%"
-		args = append(args, keyword, keyword)
-	}
+	query, args := qb.Build()
+	return executeHistoryQuery(db, query, args)
+}
 
-	// ドメインフィルタ
-	if filter.Domain != "" {
-		query += ` AND hi.domain_expansion = ?`
-		args = append(args, filter.Domain)
-	}
-
-	// 日付範囲フィルタ
-	if !filter.From.IsZero() {
-		query += ` AND hv.visit_time >= ?`
-		args = append(args, convertToTimestamp(filter.From))
-	}
-	if !filter.To.IsZero() {
-		query += ` AND hv.visit_time <= ?`
-		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
-	}
-
-	query += ` ORDER BY hv.visit_time DESC LIMIT ?`
-	args = append(args, limit)
-
+// executeHistoryQuery は履歴クエリを実行して結果を返す
+func executeHistoryQuery(db *sql.DB, query string, args []interface{}) ([]HistoryVisit, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("履歴の取得に失敗: %w", err)
@@ -178,27 +162,16 @@ func getDomainStats(db *sql.DB, limit int) ([]DomainStats, error) {
 	return stats, nil
 }
 
+// 訪問時刻取得用のベースクエリ
+const visitTimeBaseQuery = `
+	SELECT hv.visit_time FROM history_visits hv
+	JOIN history_items hi ON hv.history_item = hi.id
+	WHERE 1=1`
+
 // getHourlyStats は時間帯別の訪問統計を取得
 func getHourlyStats(db *sql.DB, filter SearchFilter) ([]HourlyStats, error) {
-	query := `
-		SELECT hv.visit_time FROM history_visits hv
-		JOIN history_items hi ON hv.history_item = hi.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
-
-	if filter.Domain != "" {
-		query += ` AND hi.domain_expansion = ?`
-		args = append(args, filter.Domain)
-	}
-	if !filter.From.IsZero() {
-		query += ` AND hv.visit_time >= ?`
-		args = append(args, convertToTimestamp(filter.From))
-	}
-	if !filter.To.IsZero() {
-		query += ` AND hv.visit_time <= ?`
-		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
-	}
+	qb := NewQueryBuilder(visitTimeBaseQuery).WithFilter(filter)
+	query, args := qb.Build()
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
@@ -228,25 +201,8 @@ func getHourlyStats(db *sql.DB, filter SearchFilter) ([]HourlyStats, error) {
 
 // getDailyStats は日別の訪問統計を取得（過去N日間）
 func getDailyStats(db *sql.DB, days int, filter SearchFilter) ([]DailyStats, error) {
-	query := `
-		SELECT hv.visit_time FROM history_visits hv
-		JOIN history_items hi ON hv.history_item = hi.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
-
-	if filter.Domain != "" {
-		query += ` AND hi.domain_expansion = ?`
-		args = append(args, filter.Domain)
-	}
-	if !filter.From.IsZero() {
-		query += ` AND hv.visit_time >= ?`
-		args = append(args, convertToTimestamp(filter.From))
-	}
-	if !filter.To.IsZero() {
-		query += ` AND hv.visit_time <= ?`
-		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
-	}
+	qb := NewQueryBuilder(visitTimeBaseQuery).WithFilter(filter)
+	query, args := qb.Build()
 
 	rows, err := db.Query(query, args...)
 	if err != nil {
