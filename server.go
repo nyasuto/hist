@@ -81,10 +81,14 @@ func (s *WebServer) Start() error {
 	// ページハンドラー
 	mux.HandleFunc("/", s.handleDashboard)
 	mux.HandleFunc("/history", s.handleHistory)
+	mux.HandleFunc("/stats", s.handleStatsPage)
 
 	// APIハンドラー
 	mux.HandleFunc("/api/stats", s.handleAPIStats)
+	mux.HandleFunc("/api/stats/hourly", s.handleAPIStatsHourly)
+	mux.HandleFunc("/api/stats/daily", s.handleAPIStatsDaily)
 	mux.HandleFunc("/api/history", s.handleAPIHistory)
+	mux.HandleFunc("/api/domains", s.handleAPIDomains)
 
 	// 静的ファイル
 	mux.Handle("/static/", http.FileServer(http.FS(staticFS)))
@@ -153,6 +157,12 @@ type HistoryPageData struct {
 	HasNext     bool
 	PrevPage    int
 	NextPage    int
+	// フィルタ
+	Search  string
+	Domain  string
+	From    string
+	To      string
+	Domains []string
 }
 
 // handleHistory は履歴一覧ページを表示
@@ -164,11 +174,32 @@ func (s *WebServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// フィルタ条件を取得
+	filter := SearchFilter{}
+	searchQuery := r.URL.Query().Get("search")
+	domainQuery := r.URL.Query().Get("domain")
+	fromQuery := r.URL.Query().Get("from")
+	toQuery := r.URL.Query().Get("to")
+
+	filter.Keyword = searchQuery
+	filter.Domain = domainQuery
+
+	if fromQuery != "" {
+		if t, err := time.Parse("2006-01-02", fromQuery); err == nil {
+			filter.From = t
+		}
+	}
+	if toQuery != "" {
+		if t, err := time.Parse("2006-01-02", toQuery); err == nil {
+			filter.To = t
+		}
+	}
+
 	perPage := 50
 	offset := (page - 1) * perPage
 
-	// 総件数を取得
-	total, err := getTotalVisits(s.db)
+	// フィルタ付きの総件数を取得
+	total, err := getFilteredVisitCount(s.db, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -179,8 +210,15 @@ func (s *WebServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 		totalPages = 1
 	}
 
-	// offsetを使った取得のためにlimitを調整
-	visits, err := getRecentVisitsWithOffset(s.db, perPage, offset, SearchFilter{})
+	// offsetを使った取得
+	visits, err := getRecentVisitsWithOffset(s.db, perPage, offset, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// ドメイン一覧を取得
+	domains, err := getAllDomains(s.db)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -194,6 +232,11 @@ func (s *WebServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 		HasNext:     page < totalPages,
 		PrevPage:    page - 1,
 		NextPage:    page + 1,
+		Search:      searchQuery,
+		Domain:      domainQuery,
+		From:        fromQuery,
+		To:          toQuery,
+		Domains:     domains,
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "history.html", data); err != nil {
@@ -308,4 +351,181 @@ func getRecentVisitsWithOffset(db *sql.DB, limit, offset int, filter SearchFilte
 		visits = append(visits, v)
 	}
 	return visits, nil
+}
+
+// getFilteredVisitCount はフィルタ条件に一致する訪問数を取得
+func getFilteredVisitCount(db *sql.DB, filter SearchFilter) (int, error) {
+	query := `
+		SELECT COUNT(*)
+		FROM history_visits hv
+		JOIN history_items hi ON hv.history_item = hi.id
+		WHERE 1=1
+	`
+	args := []interface{}{}
+
+	if filter.Keyword != "" {
+		query += ` AND (hi.url LIKE ? OR hv.title LIKE ?)`
+		keyword := "%" + filter.Keyword + "%"
+		args = append(args, keyword, keyword)
+	}
+
+	if filter.Domain != "" {
+		query += ` AND hi.domain_expansion = ?`
+		args = append(args, filter.Domain)
+	}
+
+	if !filter.From.IsZero() {
+		query += ` AND hv.visit_time >= ?`
+		args = append(args, convertToTimestamp(filter.From))
+	}
+	if !filter.To.IsZero() {
+		query += ` AND hv.visit_time <= ?`
+		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
+	}
+
+	var count int
+	err := db.QueryRow(query, args...).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("訪問数の取得に失敗: %w", err)
+	}
+	return count, nil
+}
+
+// getAllDomains は全てのドメインを取得
+func getAllDomains(db *sql.DB) ([]string, error) {
+	query := `
+		SELECT DISTINCT COALESCE(domain_expansion, '') as domain
+		FROM history_items
+		WHERE domain_expansion IS NOT NULL AND domain_expansion != ''
+		ORDER BY domain
+	`
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("ドメイン一覧の取得に失敗: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var domains []string
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
+		}
+		domains = append(domains, domain)
+	}
+	return domains, nil
+}
+
+// StatsPageData は統計ページ用のデータ
+type StatsPageData struct {
+	HourlyStats []HourlyStats
+	DailyStats  []DailyStats
+	DomainStats []DomainStats
+	Domains     []string
+	Domain      string
+	Days        int
+}
+
+// handleStatsPage は統計ページを表示
+func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
+	domainQuery := r.URL.Query().Get("domain")
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+
+	filter := SearchFilter{Domain: domainQuery}
+
+	hourlyStats, err := getHourlyStats(s.db, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	dailyStats, err := getDailyStats(s.db, days, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	domainStats, err := getDomainStats(s.db, 10)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	domains, err := getAllDomains(s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	data := StatsPageData{
+		HourlyStats: hourlyStats,
+		DailyStats:  dailyStats,
+		DomainStats: domainStats,
+		Domains:     domains,
+		Domain:      domainQuery,
+		Days:        days,
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "stats.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleAPIStatsHourly は時間帯別統計をJSONで返す
+func (s *WebServer) handleAPIStatsHourly(w http.ResponseWriter, r *http.Request) {
+	domainQuery := r.URL.Query().Get("domain")
+	filter := SearchFilter{Domain: domainQuery}
+
+	hourlyStats, err := getHourlyStats(s.db, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(hourlyStats); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleAPIStatsDaily は日別統計をJSONで返す
+func (s *WebServer) handleAPIStatsDaily(w http.ResponseWriter, r *http.Request) {
+	domainQuery := r.URL.Query().Get("domain")
+	days := 30
+	if d := r.URL.Query().Get("days"); d != "" {
+		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
+			days = parsed
+		}
+	}
+
+	filter := SearchFilter{Domain: domainQuery}
+	dailyStats, err := getDailyStats(s.db, days, filter)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(dailyStats); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleAPIDomains はドメイン一覧をJSONで返す
+func (s *WebServer) handleAPIDomains(w http.ResponseWriter, r *http.Request) {
+	domains, err := getAllDomains(s.db)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(domains); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }
