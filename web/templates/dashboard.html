@@ -55,7 +55,7 @@
                     <div class="ml-5 w-0 flex-1">
                         <dl>
                             <dt class="text-sm font-medium text-gray-500 truncate">ドメイン数</dt>
-                            <dd class="text-3xl font-semibold text-gray-900">{{len .HierarchicalDomainStats}}</dd>
+                            <dd class="text-3xl font-semibold text-gray-900">{{len .DomainPathStats}}</dd>
                         </dl>
                     </div>
                 </div>
@@ -74,7 +74,7 @@
                         <dl>
                             <dt class="text-sm font-medium text-gray-500 truncate">トップドメイン</dt>
                             <dd class="text-3xl font-semibold text-gray-900">
-                                {{if .HierarchicalDomainStats}}{{(index .HierarchicalDomainStats 0).BaseDomain}}{{else}}-{{end}}
+                                {{if .DomainPathStats}}{{(index .DomainPathStats 0).Domain}}{{else}}-{{end}}
                             </dd>
                         </dl>
                     </div>
@@ -84,19 +84,19 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <!-- ドメイン別統計（階層表示） -->
+        <!-- ドメイン別統計（パス階層表示） -->
         <div class="bg-white shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
                 <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">ドメイン別訪問数（Top 10）</h3>
                 <div class="space-y-2">
-                    {{range .HierarchicalDomainStats}}
-                    {{if .HasSubdomains}}
+                    {{range .DomainPathStats}}
+                    {{if .HasPaths}}
                     <details class="group">
                         <summary class="flex items-center cursor-pointer list-none hover:bg-gray-50 rounded p-1 -ml-1">
                             <svg class="chevron w-4 h-4 text-gray-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                             </svg>
-                            <div class="w-32 truncate text-sm font-medium text-gray-700">{{.BaseDomain}}</div>
+                            <div class="w-40 truncate text-sm font-medium text-gray-700">{{.Domain}}</div>
                             <div class="flex-1 mx-4">
                                 <div class="bg-gray-200 rounded-full h-4">
                                     <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .TotalCount $.MaxDomainHits}}%"></div>
@@ -105,9 +105,9 @@
                             <div class="w-16 text-right text-sm font-medium text-gray-700">{{.TotalCount}}</div>
                         </summary>
                         <div class="ml-6 mt-1 space-y-1 border-l-2 border-gray-200 pl-4">
-                            {{range .Subdomains}}
-                            <a href="/history?domain={{.Subdomain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1 group/item">
-                                <div class="w-32 truncate text-sm text-gray-600 group-hover/item:text-blue-600">{{.Subdomain}}</div>
+                            {{range .Paths}}
+                            <a href="/history?search={{.Path}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1 group/item">
+                                <div class="w-40 truncate text-sm text-gray-600 group-hover/item:text-blue-600 font-mono">{{.Path}}</div>
                                 <div class="flex-1 mx-4">
                                     <div class="bg-gray-100 rounded-full h-3">
                                         <div class="bg-blue-400 rounded-full h-3 bar" style="width: {{percentage .VisitCount $.MaxDomainHits}}%"></div>
@@ -116,12 +116,23 @@
                                 <div class="w-16 text-right text-sm text-gray-500">{{.VisitCount}}</div>
                             </a>
                             {{end}}
+                            {{if gt .OtherCount 0}}
+                            <div class="flex items-center p-1 -ml-1 text-gray-400">
+                                <div class="w-40 truncate text-sm italic">その他</div>
+                                <div class="flex-1 mx-4">
+                                    <div class="bg-gray-100 rounded-full h-3">
+                                        <div class="bg-gray-300 rounded-full h-3 bar" style="width: {{percentage .OtherCount $.MaxDomainHits}}%"></div>
+                                    </div>
+                                </div>
+                                <div class="w-16 text-right text-sm">{{.OtherCount}}</div>
+                            </div>
+                            {{end}}
                         </div>
                     </details>
                     {{else}}
-                    <a href="/history?domain={{(index .Subdomains 0).Subdomain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1">
+                    <a href="/history?domain={{.Domain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1">
                         <div class="w-6 mr-2"></div>
-                        <div class="w-32 truncate text-sm text-gray-600 hover:text-blue-600">{{.BaseDomain}}</div>
+                        <div class="w-40 truncate text-sm text-gray-600 hover:text-blue-600">{{.Domain}}</div>
                         <div class="flex-1 mx-4">
                             <div class="bg-gray-200 rounded-full h-4">
                                 <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .TotalCount $.MaxDomainHits}}%"></div>

@@ -108,10 +108,10 @@ func (s *WebServer) Start() error {
 
 // DashboardData はダッシュボード用のデータ
 type DashboardData struct {
-	TotalVisits             int
-	HierarchicalDomainStats []HierarchicalDomainStats
-	RecentVisits            []HistoryVisit
-	MaxDomainHits           int
+	TotalVisits     int
+	DomainPathStats []DomainPathStats
+	RecentVisits    []HistoryVisit
+	MaxDomainHits   int
 }
 
 // handleDashboard はダッシュボードページを表示
@@ -128,7 +128,7 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := SearchFilter{IgnoreDomains: s.ignoreDomains}
-	hierarchicalStats, err := getHierarchicalDomainStats(s.db, DefaultDomainLimit, filter)
+	domainPathStats, err := getDomainPathStats(s.db, DefaultDomainLimit, DefaultPathLimit, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -141,15 +141,15 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxHits := 0
-	if len(hierarchicalStats) > 0 {
-		maxHits = hierarchicalStats[0].TotalCount
+	if len(domainPathStats) > 0 {
+		maxHits = domainPathStats[0].TotalCount
 	}
 
 	data := DashboardData{
-		TotalVisits:             total,
-		HierarchicalDomainStats: hierarchicalStats,
-		RecentVisits:            recentVisits,
-		MaxDomainHits:           maxHits,
+		TotalVisits:     total,
+		DomainPathStats: domainPathStats,
+		RecentVisits:    recentVisits,
+		MaxDomainHits:   maxHits,
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "dashboard.html", data); err != nil {
