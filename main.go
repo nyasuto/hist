@@ -196,38 +196,79 @@ func executeHistoryQuery(db *sql.DB, query string, args []interface{}) ([]Histor
 	return visits, nil
 }
 
-// ドメイン統計用のベースクエリ
-const domainStatsBaseQuery = `
-	SELECT
-		COALESCE(hi.domain_expansion, 'その他') as domain,
-		SUM(hi.visit_count) as total_visits
-	FROM history_items hi
-	WHERE 1=1`
-
-// getDomainStats はドメイン別の訪問統計を取得
+// getDomainStats はドメイン別の訪問統計を取得（URLからドメインを抽出）
 func getDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]DomainStats, error) {
-	qb := NewQueryBuilder(domainStatsBaseQuery).
-		WithIgnoreDomains(filter.IgnoreDomains)
+	// 全てのURLとvisit_countを取得
+	query := `SELECT hi.url, hi.visit_count FROM history_items hi`
 
-	query, args := qb.Build()
-	query += ` GROUP BY hi.domain_expansion ORDER BY total_visits DESC LIMIT ?`
-	args = append(args, limit)
-
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query)
 	if err != nil {
 		return nil, fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
 
-	var stats []DomainStats
+	// URLからドメインを抽出して集計
+	domainCounts := make(map[string]int)
 	for rows.Next() {
-		var s DomainStats
-		if err := rows.Scan(&s.Domain, &s.VisitCount); err != nil {
+		var url string
+		var visitCount int
+		if err := rows.Scan(&url, &visitCount); err != nil {
 			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
 		}
-		stats = append(stats, s)
+		domain := extractDomain(url)
+		if domain == "" {
+			domain = "不明"
+		}
+
+		// イグノアリストチェック
+		if shouldIgnoreDomain(domain, filter.IgnoreDomains) {
+			continue
+		}
+
+		domainCounts[domain] += visitCount
 	}
+
+	// スライスに変換してソート
+	var stats []DomainStats
+	for domain, count := range domainCounts {
+		stats = append(stats, DomainStats{Domain: domain, VisitCount: count})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].VisitCount > stats[j].VisitCount
+	})
+
+	// limitで制限
+	if limit > 0 && len(stats) > limit {
+		stats = stats[:limit]
+	}
+
 	return stats, nil
+}
+
+// shouldIgnoreDomain はドメインがイグノアリストに含まれるかチェック
+func shouldIgnoreDomain(domain string, ignoreDomains []string) bool {
+	for _, ignored := range ignoreDomains {
+		if ignored == "" {
+			continue
+		}
+		// 完全一致
+		if domain == ignored {
+			return true
+		}
+		// ドメインが ignored で始まる（例: youtube → youtube.com にマッチ）
+		if len(domain) > len(ignored) && domain[:len(ignored)+1] == ignored+"." {
+			return true
+		}
+		// サブドメイン（末尾が .ignored、例: google → accounts.google.com にマッチ）
+		if len(domain) > len(ignored)+1 && domain[len(domain)-len(ignored)-1:] == "."+ignored {
+			return true
+		}
+		// サブドメイン + TLD（例: google → accounts.google.com にマッチ）
+		if strings.Contains(domain, "."+ignored+".") {
+			return true
+		}
+	}
+	return false
 }
 
 // 訪問時刻取得用のベースクエリ
