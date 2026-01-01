@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binaries
+        run: |
+          # macOS (Intel)
+          GOOS=darwin GOARCH=amd64 go build -o dist/hist-darwin-amd64
+          # macOS (Apple Silicon)
+          GOOS=darwin GOARCH=arm64 go build -o dist/hist-darwin-arm64
+          # Linux
+          GOOS=linux GOARCH=amd64 go build -o dist/hist-linux-amd64
+          # Windows
+          GOOS=windows GOARCH=amd64 go build -o dist/hist-windows-amd64.exe
+
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/hist-darwin-amd64
+            dist/hist-darwin-arm64
+            dist/hist-linux-amd64
+            dist/hist-windows-amd64.exe
+            dist/checksums.txt
+          generate_release_notes: true
