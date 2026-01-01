@@ -2,9 +2,11 @@ package main
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -293,6 +295,87 @@ func getTotalVisits(db *sql.DB) (int, error) {
 	return count, nil
 }
 
+// writeCSV はCSV/TSV形式で結果を出力
+func writeCSV(w io.Writer, result AnalysisResult, showHistory, showDomains, showHourly, showDaily bool, delimiter rune) error {
+	writer := csv.NewWriter(w)
+	writer.Comma = delimiter
+	defer writer.Flush()
+
+	// 履歴一覧
+	if showHistory && len(result.RecentVisits) > 0 {
+		if err := writer.Write([]string{"visit_time", "title", "domain", "url"}); err != nil {
+			return err
+		}
+		for _, v := range result.RecentVisits {
+			record := []string{
+				v.VisitTime.Format("2006-01-02 15:04:05"),
+				v.Title,
+				v.Domain,
+				v.URL,
+			}
+			if err := writer.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+
+	// ドメイン統計
+	if showDomains && len(result.DomainStats) > 0 {
+		if showHistory && len(result.RecentVisits) > 0 {
+			if err := writer.Write([]string{}); err != nil {
+				return err
+			}
+		}
+		if err := writer.Write([]string{"domain", "visit_count"}); err != nil {
+			return err
+		}
+		for _, s := range result.DomainStats {
+			record := []string{s.Domain, fmt.Sprintf("%d", s.VisitCount)}
+			if err := writer.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 時間帯統計
+	if showHourly && len(result.HourlyStats) > 0 {
+		if (showHistory && len(result.RecentVisits) > 0) || (showDomains && len(result.DomainStats) > 0) {
+			if err := writer.Write([]string{}); err != nil {
+				return err
+			}
+		}
+		if err := writer.Write([]string{"hour", "visit_count"}); err != nil {
+			return err
+		}
+		for _, s := range result.HourlyStats {
+			record := []string{fmt.Sprintf("%02d:00", s.Hour), fmt.Sprintf("%d", s.VisitCount)}
+			if err := writer.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+
+	// 日別統計
+	if showDaily && len(result.DailyStats) > 0 {
+		if (showHistory && len(result.RecentVisits) > 0) || (showDomains && len(result.DomainStats) > 0) || (showHourly && len(result.HourlyStats) > 0) {
+			if err := writer.Write([]string{}); err != nil {
+				return err
+			}
+		}
+		if err := writer.Write([]string{"date", "visit_count"}); err != nil {
+			return err
+		}
+		for _, s := range result.DailyStats {
+			record := []string{s.Date, fmt.Sprintf("%d", s.VisitCount)}
+			if err := writer.Write(record); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 // printTextOutput はテキスト形式で結果を出力
 func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly, showDaily bool) {
 	fmt.Printf("\n📊 Safari 履歴分析結果\n")
@@ -390,6 +473,11 @@ func main() {
 	fromDate := flag.String("from", "", "開始日（YYYY-MM-DD）")
 	toDate := flag.String("to", "", "終了日（YYYY-MM-DD）")
 
+	// エクスポートオプション
+	csvOutput := flag.Bool("csv", false, "CSV形式で出力")
+	tsvOutput := flag.Bool("tsv", false, "TSV形式で出力")
+	outputFile := flag.String("output", "", "出力ファイルパス")
+
 	flag.Parse()
 
 	// フィルタ条件を構築
@@ -485,15 +573,38 @@ func main() {
 		}
 	}
 
+	// 出力先を決定
+	var output io.Writer = os.Stdout
+	if *outputFile != "" {
+		f, err := os.Create(*outputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ファイル作成エラー: %v\n", err)
+			os.Exit(1)
+		}
+		defer func() { _ = f.Close() }()
+		output = f
+	}
+
 	// 出力
-	if *jsonOutput {
-		encoder := json.NewEncoder(os.Stdout)
+	switch {
+	case *jsonOutput:
+		encoder := json.NewEncoder(output)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(result); err != nil {
 			fmt.Fprintf(os.Stderr, "JSON出力エラー: %v\n", err)
 			os.Exit(1)
 		}
-	} else {
+	case *csvOutput:
+		if err := writeCSV(output, result, *showHistory, *showDomains, *showHourly, *showDaily, ','); err != nil {
+			fmt.Fprintf(os.Stderr, "CSV出力エラー: %v\n", err)
+			os.Exit(1)
+		}
+	case *tsvOutput:
+		if err := writeCSV(output, result, *showHistory, *showDomains, *showHourly, *showDaily, '\t'); err != nil {
+			fmt.Fprintf(os.Stderr, "TSV出力エラー: %v\n", err)
+			os.Exit(1)
+		}
+	default:
 		printTextOutput(result, *showHistory, *showDomains, *showHourly, *showDaily)
 	}
 }
