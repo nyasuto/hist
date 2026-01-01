@@ -53,12 +53,21 @@ func TestQueryBuilderWithDomain(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithDomain("example.com")
 
 	query, args := qb.Build()
-	expectedQuery := baseQuery + ` AND hi.domain_expansion = ?`
+	expectedQuery := baseQuery + ` AND (hi.domain_expansion = ? OR hi.url LIKE ? OR hi.url LIKE ?)`
 	if query != expectedQuery {
 		t.Errorf("期待値 %q, 実際 %q", expectedQuery, query)
 	}
-	if len(args) != 1 || args[0] != "example.com" {
-		t.Errorf("期待値 [example.com], 実際 %v", args)
+	if len(args) != 3 {
+		t.Fatalf("期待値 3個の引数, 実際 %d個", len(args))
+	}
+	if args[0] != "example.com" {
+		t.Errorf("期待値 example.com, 実際 %v", args[0])
+	}
+	if args[1] != "%://example.com/%" {
+		t.Errorf("期待値 %%://example.com/%%, 実際 %v", args[1])
+	}
+	if args[2] != "%://example.com" {
+		t.Errorf("期待値 %%://example.com, 実際 %v", args[2])
 	}
 }
 
@@ -138,8 +147,8 @@ func TestQueryBuilderWithFilter(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithFilter(filter)
 
 	query, args := qb.Build()
-	if len(args) != 5 { // 2 (keyword) + 1 (domain) + 2 (date range)
-		t.Errorf("期待値 5個の引数, 実際 %d個", len(args))
+	if len(args) != 7 { // 2 (keyword) + 3 (domain) + 2 (date range)
+		t.Errorf("期待値 7個の引数, 実際 %d個", len(args))
 	}
 	// キーワード条件が含まれているか
 	if query == baseQuery {
@@ -200,7 +209,7 @@ func TestQueryBuilderChaining(t *testing.T) {
 	// すべての条件が含まれているか確認
 	expectedParts := []string{
 		"AND (hi.url LIKE ? OR hv.title LIKE ?)",
-		"AND hi.domain_expansion = ?",
+		"AND (hi.domain_expansion = ? OR hi.url LIKE ? OR hi.url LIKE ?)",
 		"ORDER BY visit_time DESC",
 		"LIMIT ?",
 		"OFFSET ?",
@@ -211,9 +220,9 @@ func TestQueryBuilderChaining(t *testing.T) {
 		}
 	}
 
-	// 引数の数を確認 (keyword: 2, domain: 1, limit: 1, offset: 1)
-	if len(args) != 5 {
-		t.Errorf("期待値 5個の引数, 実際 %d個: %v", len(args), args)
+	// 引数の数を確認 (keyword: 2, domain: 3, limit: 1, offset: 1)
+	if len(args) != 7 {
+		t.Errorf("期待値 7個の引数, 実際 %d個: %v", len(args), args)
 	}
 }
 
@@ -222,8 +231,8 @@ func TestQueryBuilderArgs(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithKeyword("test").WithDomain("example.com")
 
 	args := qb.Args()
-	if len(args) != 3 { // 2 (keyword) + 1 (domain)
-		t.Errorf("期待値 3個の引数, 実際 %d個", len(args))
+	if len(args) != 5 { // 2 (keyword) + 3 (domain)
+		t.Errorf("期待値 5個の引数, 実際 %d個", len(args))
 	}
 }
 
