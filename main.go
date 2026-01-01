@@ -62,6 +62,40 @@ type AnalysisResult struct {
 	DailyStats   []DailyStats   `json:"daily_stats,omitempty"`
 }
 
+// Config はアプリケーション設定を表す
+type Config struct {
+	// 表示件数
+	Limit       int
+	DomainLimit int
+	Days        int
+
+	// 表示オプション
+	ShowHistory bool
+	ShowDomains bool
+	ShowHourly  bool
+	ShowDaily   bool
+
+	// フィルタ
+	Filter SearchFilter
+
+	// 出力形式
+	JSONOutput bool
+	CSVOutput  bool
+	TSVOutput  bool
+	OutputFile string
+
+	// モード
+	Interactive bool
+	Serve       bool
+	Port        int
+}
+
+// exitWithError はエラーメッセージを出力して終了する
+func exitWithError(format string, args ...interface{}) {
+	fmt.Fprintf(os.Stderr, format, args...)
+	os.Exit(1)
+}
+
 // visit_time を通常の時刻に変換
 func convertCoreDataTimestamp(timestamp float64) time.Time {
 	return coreDataEpoch.Add(time.Duration(timestamp * float64(time.Second)))
@@ -410,7 +444,8 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 	}
 }
 
-func main() {
+// parseFlags はコマンドラインフラグを解析してConfigを返す
+func parseFlags() Config {
 	// コマンドラインフラグの定義
 	jsonOutput := flag.Bool("json", false, "JSON形式で出力")
 	limit := flag.Int("limit", DefaultHistoryLimit, "表示する履歴の件数")
@@ -452,146 +487,179 @@ func main() {
 	if *fromDate != "" {
 		t, err := time.Parse(TimeFormatDate, *fromDate)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: 開始日の形式が不正です（YYYY-MM-DD）: %v\n", err)
-			os.Exit(1)
+			exitWithError("エラー: 開始日の形式が不正です（YYYY-MM-DD）: %v\n", err)
 		}
 		filter.From = t
 	}
 	if *toDate != "" {
 		t, err := time.Parse(TimeFormatDate, *toDate)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: 終了日の形式が不正です（YYYY-MM-DD）: %v\n", err)
-			os.Exit(1)
+			exitWithError("エラー: 終了日の形式が不正です（YYYY-MM-DD）: %v\n", err)
 		}
 		filter.To = t
 	}
 
+	// 表示オプションの正規化
+	history := *showHistory
+	domains := *showDomains
+	hourly := *showHourly
+	daily := *showDaily
+
 	// -all が指定された場合は全て表示
 	if *showAll {
-		*showHistory = true
-		*showDomains = true
-		*showHourly = true
-		*showDaily = true
+		history = true
+		domains = true
+		hourly = true
+		daily = true
 	}
 
 	// 何も指定されていない場合はデフォルトで履歴を表示
-	if !*showHistory && !*showDomains && !*showHourly && !*showDaily {
-		*showHistory = true
+	if !history && !domains && !hourly && !daily {
+		history = true
 	}
 
-	// Safari履歴DBのパスを取得
+	return Config{
+		Limit:       *limit,
+		DomainLimit: *domainLimit,
+		Days:        *days,
+		ShowHistory: history,
+		ShowDomains: domains,
+		ShowHourly:  hourly,
+		ShowDaily:   daily,
+		Filter:      filter,
+		JSONOutput:  *jsonOutput,
+		CSVOutput:   *csvOutput,
+		TSVOutput:   *tsvOutput,
+		OutputFile:  *outputFile,
+		Interactive: *interactive,
+		Serve:       *serve,
+		Port:        *port,
+	}
+}
+
+// setupDatabase はデータベース接続を確立する
+func setupDatabase() (*sql.DB, error) {
 	dbPath, err := getDBPath()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-		os.Exit(1)
+		return nil, err
 	}
+	return openDB(dbPath)
+}
 
-	// DBを開く
-	db, err := openDB(dbPath)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-		os.Exit(1)
+// runInteractiveOrWebMode はインタラクティブまたはWebモードを実行する
+func runInteractiveOrWebMode(db *sql.DB, config Config) error {
+	if config.Interactive {
+		return runInteractiveMode(db)
 	}
-	defer func() { _ = db.Close() }()
-
-	// インタラクティブモード
-	if *interactive {
-		if err := runInteractiveMode(db); err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	// Webサーバーモード
-	if *serve {
-		server, err := NewWebServer(db, *port)
+	if config.Serve {
+		server, err := NewWebServer(db, config.Port)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
+			return err
 		}
-		if err := server.Start(); err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
-		}
-		return
+		return server.Start()
 	}
+	return nil
+}
 
-	// 分析結果を格納
+// runCLIMode はCLIモードで分析を実行する
+func runCLIMode(db *sql.DB, config Config) error {
 	var result AnalysisResult
+	var err error
 
 	// 総訪問数を取得
 	result.TotalVisits, err = getTotalVisits(db)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("総訪問数の取得に失敗: %w", err)
 	}
 
 	// 各種統計を取得
-	if *showHistory {
-		result.RecentVisits, err = getRecentVisits(db, *limit, filter)
+	if config.ShowHistory {
+		result.RecentVisits, err = getRecentVisits(db, config.Limit, config.Filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("履歴の取得に失敗: %w", err)
 		}
 	}
 
-	if *showDomains {
-		result.DomainStats, err = getDomainStats(db, *domainLimit)
+	if config.ShowDomains {
+		result.DomainStats, err = getDomainStats(db, config.DomainLimit)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
 		}
 	}
 
-	if *showHourly {
-		result.HourlyStats, err = getHourlyStats(db, filter)
+	if config.ShowHourly {
+		result.HourlyStats, err = getHourlyStats(db, config.Filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("時間帯統計の取得に失敗: %w", err)
 		}
 	}
 
-	if *showDaily {
-		result.DailyStats, err = getDailyStats(db, *days, filter)
+	if config.ShowDaily {
+		result.DailyStats, err = getDailyStats(db, config.Days, config.Filter)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("日別統計の取得に失敗: %w", err)
 		}
 	}
 
+	// 出力処理
+	return outputResult(result, config)
+}
+
+// outputResult は結果を指定された形式で出力する
+func outputResult(result AnalysisResult, config Config) error {
 	// 出力先を決定
 	var output io.Writer = os.Stdout
-	if *outputFile != "" {
-		f, err := os.Create(*outputFile)
+	if config.OutputFile != "" {
+		f, err := os.Create(config.OutputFile)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ファイル作成エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("ファイル作成エラー: %w", err)
 		}
 		defer func() { _ = f.Close() }()
 		output = f
 	}
 
-	// 出力
+	// 出力形式に応じて出力
 	switch {
-	case *jsonOutput:
+	case config.JSONOutput:
 		encoder := json.NewEncoder(output)
 		encoder.SetIndent("", "  ")
 		if err := encoder.Encode(result); err != nil {
-			fmt.Fprintf(os.Stderr, "JSON出力エラー: %v\n", err)
-			os.Exit(1)
+			return fmt.Errorf("JSON出力エラー: %w", err)
 		}
-	case *csvOutput:
-		if err := writeCSV(output, result, *showHistory, *showDomains, *showHourly, *showDaily, ','); err != nil {
-			fmt.Fprintf(os.Stderr, "CSV出力エラー: %v\n", err)
-			os.Exit(1)
+	case config.CSVOutput:
+		if err := writeCSV(output, result, config.ShowHistory, config.ShowDomains, config.ShowHourly, config.ShowDaily, ','); err != nil {
+			return fmt.Errorf("CSV出力エラー: %w", err)
 		}
-	case *tsvOutput:
-		if err := writeCSV(output, result, *showHistory, *showDomains, *showHourly, *showDaily, '\t'); err != nil {
-			fmt.Fprintf(os.Stderr, "TSV出力エラー: %v\n", err)
-			os.Exit(1)
+	case config.TSVOutput:
+		if err := writeCSV(output, result, config.ShowHistory, config.ShowDomains, config.ShowHourly, config.ShowDaily, '\t'); err != nil {
+			return fmt.Errorf("TSV出力エラー: %w", err)
 		}
 	default:
-		printTextOutput(result, *showHistory, *showDomains, *showHourly, *showDaily)
+		printTextOutput(result, config.ShowHistory, config.ShowDomains, config.ShowHourly, config.ShowDaily)
+	}
+
+	return nil
+}
+
+func main() {
+	config := parseFlags()
+
+	db, err := setupDatabase()
+	if err != nil {
+		exitWithError("エラー: %v\n", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	// インタラクティブまたはWebモード
+	if config.Interactive || config.Serve {
+		if err := runInteractiveOrWebMode(db, config); err != nil {
+			exitWithError("エラー: %v\n", err)
+		}
+		return
+	}
+
+	// CLIモード
+	if err := runCLIMode(db, config); err != nil {
+		exitWithError("エラー: %v\n", err)
 	}
 }
