@@ -33,18 +33,19 @@ type DomainStats struct {
 	VisitCount int    `json:"visit_count"`
 }
 
-// SubdomainStats はサブドメイン別の統計情報
-type SubdomainStats struct {
-	Subdomain  string `json:"subdomain"`
+// PathStats はパス別の統計情報
+type PathStats struct {
+	Path       string `json:"path"`
 	VisitCount int    `json:"visit_count"`
 }
 
-// HierarchicalDomainStats はベースドメインと関連サブドメインの統計情報
-type HierarchicalDomainStats struct {
-	BaseDomain    string           `json:"base_domain"`
-	TotalCount    int              `json:"total_count"`
-	Subdomains    []SubdomainStats `json:"subdomains"`
-	HasSubdomains bool             `json:"has_subdomains"`
+// DomainPathStats はドメインとパス別の統計情報
+type DomainPathStats struct {
+	Domain     string      `json:"domain"`
+	TotalCount int         `json:"total_count"`
+	Paths      []PathStats `json:"paths"`
+	OtherCount int         `json:"other_count"`
+	HasPaths   bool        `json:"has_paths"`
 }
 
 // HourlyStats は時間帯別の統計情報
@@ -161,6 +162,48 @@ func extractDomain(urlStr string) string {
 	}
 
 	return rest[:end]
+}
+
+// extractPath はURLからパス部分を抽出する
+// クエリパラメータ(?以降)とフラグメント(#以降)は除去
+// 例: "https://github.com/nyasuto/hist?tab=readme" → "/nyasuto/hist"
+func extractPath(urlStr string) string {
+	// プロトコル部分を探す
+	start := strings.Index(urlStr, "://")
+	if start == -1 {
+		return "/"
+	}
+	start += 3
+
+	// ホスト部分の終わりを探す（パスの開始位置）
+	rest := urlStr[start:]
+	pathStart := strings.Index(rest, "/")
+	if pathStart == -1 {
+		return "/" // パスなし
+	}
+
+	path := rest[pathStart:]
+
+	// クエリパラメータを除去
+	if idx := strings.Index(path, "?"); idx != -1 {
+		path = path[:idx]
+	}
+
+	// フラグメントを除去
+	if idx := strings.Index(path, "#"); idx != -1 {
+		path = path[:idx]
+	}
+
+	// 末尾のスラッシュを正規化（"/" 以外の場合は除去）
+	if len(path) > 1 && path[len(path)-1] == '/' {
+		path = path[:len(path)-1]
+	}
+
+	if path == "" {
+		return "/"
+	}
+
+	return path
 }
 
 // extractBaseDomain はFQDNからベースドメインを抽出する
@@ -326,8 +369,8 @@ func getDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]DomainStats, 
 	return stats, nil
 }
 
-// getHierarchicalDomainStats は階層的なドメイン統計を取得
-func getHierarchicalDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]HierarchicalDomainStats, error) {
+// getDomainPathStats はドメインとパス別の統計を取得
+func getDomainPathStats(db *sql.DB, limit int, pathLimit int, filter SearchFilter) ([]DomainPathStats, error) {
 	// 全てのURLとvisit_countを取得
 	query := `SELECT hi.url, hi.visit_count FROM history_items hi`
 
@@ -337,8 +380,8 @@ func getHierarchicalDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]H
 	}
 	defer func() { _ = rows.Close() }()
 
-	// ベースドメイン -> サブドメイン -> カウント のマップ
-	baseMap := make(map[string]map[string]int)
+	// ドメイン -> パス -> カウント のマップ
+	domainPathMap := make(map[string]map[string]int)
 
 	for rows.Next() {
 		var url string
@@ -357,38 +400,48 @@ func getHierarchicalDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]H
 			continue
 		}
 
-		baseDomain := extractBaseDomain(domain)
+		path := extractPath(url)
 
-		if baseMap[baseDomain] == nil {
-			baseMap[baseDomain] = make(map[string]int)
+		if domainPathMap[domain] == nil {
+			domainPathMap[domain] = make(map[string]int)
 		}
-		baseMap[baseDomain][domain] += visitCount
+		domainPathMap[domain][path] += visitCount
 	}
 
-	// 階層構造に変換
-	var stats []HierarchicalDomainStats
-	for baseDomain, subdomains := range baseMap {
+	// 構造体に変換
+	var stats []DomainPathStats
+	for domain, paths := range domainPathMap {
 		totalCount := 0
-		var subStats []SubdomainStats
+		var pathStats []PathStats
 
-		for subdomain, count := range subdomains {
+		for path, count := range paths {
 			totalCount += count
-			subStats = append(subStats, SubdomainStats{
-				Subdomain:  subdomain,
+			pathStats = append(pathStats, PathStats{
+				Path:       path,
 				VisitCount: count,
 			})
 		}
 
-		// サブドメインをカウント順にソート
-		sort.Slice(subStats, func(i, j int) bool {
-			return subStats[i].VisitCount > subStats[j].VisitCount
+		// パスをカウント順にソート
+		sort.Slice(pathStats, func(i, j int) bool {
+			return pathStats[i].VisitCount > pathStats[j].VisitCount
 		})
 
-		stats = append(stats, HierarchicalDomainStats{
-			BaseDomain:    baseDomain,
-			TotalCount:    totalCount,
-			Subdomains:    subStats,
-			HasSubdomains: len(subStats) > 1,
+		// トップN件のパスのみ保持、残りは「その他」
+		otherCount := 0
+		if pathLimit > 0 && len(pathStats) > pathLimit {
+			for _, p := range pathStats[pathLimit:] {
+				otherCount += p.VisitCount
+			}
+			pathStats = pathStats[:pathLimit]
+		}
+
+		stats = append(stats, DomainPathStats{
+			Domain:     domain,
+			TotalCount: totalCount,
+			Paths:      pathStats,
+			OtherCount: otherCount,
+			HasPaths:   len(pathStats) > 1 || otherCount > 0,
 		})
 	}
 
