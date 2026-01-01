@@ -45,11 +45,11 @@ type DailyStats struct {
 
 // AnalysisResult は分析結果全体を表す
 type AnalysisResult struct {
-	TotalVisits   int           `json:"total_visits"`
-	RecentVisits  []HistoryVisit `json:"recent_visits,omitempty"`
-	DomainStats   []DomainStats  `json:"domain_stats,omitempty"`
-	HourlyStats   []HourlyStats  `json:"hourly_stats,omitempty"`
-	DailyStats    []DailyStats   `json:"daily_stats,omitempty"`
+	TotalVisits  int            `json:"total_visits"`
+	RecentVisits []HistoryVisit `json:"recent_visits,omitempty"`
+	DomainStats  []DomainStats  `json:"domain_stats,omitempty"`
+	HourlyStats  []HourlyStats  `json:"hourly_stats,omitempty"`
+	DailyStats   []DailyStats   `json:"daily_stats,omitempty"`
 }
 
 // visit_time を通常の時刻に変換
@@ -93,7 +93,7 @@ func getRecentVisits(db *sql.DB, limit int) ([]HistoryVisit, error) {
 	if err != nil {
 		return nil, fmt.Errorf("履歴の取得に失敗: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var visits []HistoryVisit
 	for rows.Next() {
@@ -123,7 +123,7 @@ func getDomainStats(db *sql.DB, limit int) ([]DomainStats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var stats []DomainStats
 	for rows.Next() {
@@ -145,7 +145,7 @@ func getHourlyStats(db *sql.DB) ([]HourlyStats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("時間帯統計の取得に失敗: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	hourCounts := make(map[int]int)
 	for rows.Next() {
@@ -176,7 +176,7 @@ func getDailyStats(db *sql.DB, days int) ([]DailyStats, error) {
 	if err != nil {
 		return nil, fmt.Errorf("日別統計の取得に失敗: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	dateCounts := make(map[string]int)
 	cutoff := time.Now().AddDate(0, 0, -days)
@@ -338,7 +338,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
 		os.Exit(1)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// 分析結果を格納
 	var result AnalysisResult
