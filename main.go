@@ -126,6 +126,29 @@ func convertToTimestamp(t time.Time) float64 {
 	return t.Sub(coreDataEpoch).Seconds()
 }
 
+// extractDomain はURLからドメイン（ホスト名）を抽出する
+// domain_expansionがNULLまたは空の場合のフォールバック用
+func extractDomain(urlStr string) string {
+	// プロトコル部分を探す
+	start := strings.Index(urlStr, "://")
+	if start == -1 {
+		return ""
+	}
+	start += 3
+
+	// ホスト部分の終わりを探す（パス、クエリ、ポートのいずれか）
+	rest := urlStr[start:]
+	end := len(rest)
+	for i, c := range rest {
+		if c == '/' || c == '?' || c == ':' || c == '#' {
+			end = i
+			break
+		}
+	}
+
+	return rest[:end]
+}
+
 // 履歴取得用のベースクエリ
 const historyBaseQuery = `
 	SELECT
@@ -164,6 +187,10 @@ func executeHistoryQuery(db *sql.DB, query string, args []interface{}) ([]Histor
 			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
 		}
 		v.VisitTime = convertCoreDataTimestamp(visitTime)
+		// domain_expansionが空の場合、URLからドメインを抽出
+		if v.Domain == "" {
+			v.Domain = extractDomain(v.URL)
+		}
 		visits = append(visits, v)
 	}
 	return visits, nil
