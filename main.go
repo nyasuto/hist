@@ -478,6 +478,10 @@ func main() {
 	tsvOutput := flag.Bool("tsv", false, "TSV形式で出力")
 	outputFile := flag.String("output", "", "出力ファイルパス")
 
+	// インタラクティブモード
+	interactive := flag.Bool("interactive", false, "インタラクティブモードで起動")
+	flag.BoolVar(interactive, "i", false, "インタラクティブモードで起動（-interactiveの短縮形）")
+
 	flag.Parse()
 
 	// フィルタ条件を構築
@@ -529,6 +533,15 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() { _ = db.Close() }()
+
+	// インタラクティブモード
+	if *interactive {
+		if err := runInteractiveMode(db); err != nil {
+			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	// 分析結果を格納
 	var result AnalysisResult
