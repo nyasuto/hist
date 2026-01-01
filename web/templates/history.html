@@ -1,8 +1,21 @@
-{{template "layout" .}}
+{{define "history.html"}}
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>履歴一覧 - Safari履歴分析</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .bar {
+            transition: width 0.3s ease;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    {{template "nav"}}
 
-{{define "title"}}履歴一覧 - Safari履歴分析{{end}}
-
-{{define "content"}}
+    <main class="max-w-7xl mx-auto py-6 sm:px-6 lg:px-8">
 <div class="px-4 py-6 sm:px-0">
     <!-- 検索・フィルタ -->
     <div class="bg-white shadow rounded-lg mb-6">
@@ -228,4 +241,9 @@ document.addEventListener('keydown', function(e) {
     }
 });
 </script>
+    </main>
+
+    {{template "footer"}}
+</body>
+</html>
 {{end}}
