@@ -4,6 +4,49 @@
 
 {{define "content"}}
 <div class="px-4 py-6 sm:px-0">
+    <!-- 検索・フィルタ -->
+    <div class="bg-white shadow rounded-lg mb-6">
+        <div class="px-4 py-5 sm:p-6">
+            <form method="GET" action="/history" class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
+                <div>
+                    <label for="search" class="block text-sm font-medium text-gray-700">キーワード検索</label>
+                    <input type="text" name="search" id="search" value="{{.Search}}" placeholder="URL・タイトル"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2">
+                </div>
+                <div>
+                    <label for="domain" class="block text-sm font-medium text-gray-700">ドメイン</label>
+                    <select name="domain" id="domain"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2">
+                        <option value="">すべて</option>
+                        {{range .Domains}}
+                        <option value="{{.}}" {{if eq . $.Domain}}selected{{end}}>{{.}}</option>
+                        {{end}}
+                    </select>
+                </div>
+                <div>
+                    <label for="from" class="block text-sm font-medium text-gray-700">開始日</label>
+                    <input type="date" name="from" id="from" value="{{.From}}"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2">
+                </div>
+                <div>
+                    <label for="to" class="block text-sm font-medium text-gray-700">終了日</label>
+                    <input type="date" name="to" id="to" value="{{.To}}"
+                        class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 sm:text-sm border px-3 py-2">
+                </div>
+                <div class="flex items-end gap-2">
+                    <button type="submit"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        検索
+                    </button>
+                    <a href="/history"
+                        class="inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                        クリア
+                    </a>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <div class="bg-white shadow rounded-lg">
         <div class="px-4 py-5 sm:p-6">
             <div class="flex justify-between items-center mb-4">
@@ -32,7 +75,7 @@
                     </thead>
                     <tbody class="bg-white divide-y divide-gray-200">
                         {{range .Visits}}
-                        <tr class="hover:bg-gray-50">
+                        <tr class="hover:bg-gray-50 cursor-pointer" onclick="showDetail('{{.Title}}', '{{.URL}}', '{{.Domain}}', '{{formatTime .VisitTime}}')">
                             <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                 {{formatTime .VisitTime}}
                             </td>
@@ -45,9 +88,9 @@
                                 {{.Domain}}
                             </td>
                             <td class="px-6 py-4 text-sm text-gray-500">
-                                <a href="{{.URL}}" target="_blank" rel="noopener noreferrer" class="text-blue-600 hover:text-blue-800 max-w-xs truncate block" title="{{.URL}}">
+                                <span class="text-blue-600 max-w-xs truncate block" title="{{.URL}}">
                                     {{truncate .URL 50}}
-                                </a>
+                                </span>
                             </td>
                         </tr>
                         {{else}}
@@ -65,12 +108,12 @@
             <div class="mt-6 flex items-center justify-between border-t border-gray-200 pt-4">
                 <div class="flex-1 flex justify-between sm:hidden">
                     {{if .HasPrev}}
-                    <a href="/history?page={{.PrevPage}}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <a href="/history?page={{.PrevPage}}{{if .Search}}&search={{.Search}}{{end}}{{if .Domain}}&domain={{.Domain}}{{end}}{{if .From}}&from={{.From}}{{end}}{{if .To}}&to={{.To}}{{end}}" class="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         前へ
                     </a>
                     {{end}}
                     {{if .HasNext}}
-                    <a href="/history?page={{.NextPage}}" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
+                    <a href="/history?page={{.NextPage}}{{if .Search}}&search={{.Search}}{{end}}{{if .Domain}}&domain={{.Domain}}{{end}}{{if .From}}&from={{.From}}{{end}}{{if .To}}&to={{.To}}{{end}}" class="ml-3 relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50">
                         次へ
                     </a>
                     {{end}}
@@ -84,7 +127,7 @@
                     <div>
                         <nav class="relative z-0 inline-flex rounded-md shadow-sm -space-x-px" aria-label="Pagination">
                             {{if .HasPrev}}
-                            <a href="/history?page={{.PrevPage}}" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <a href="/history?page={{.PrevPage}}{{if .Search}}&search={{.Search}}{{end}}{{if .Domain}}&domain={{.Domain}}{{end}}{{if .From}}&from={{.From}}{{end}}{{if .To}}&to={{.To}}{{end}}" class="relative inline-flex items-center px-2 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
                                 <span class="sr-only">前へ</span>
                                 <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                     <path fill-rule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clip-rule="evenodd" />
@@ -104,7 +147,7 @@
                             </span>
 
                             {{if .HasNext}}
-                            <a href="/history?page={{.NextPage}}" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
+                            <a href="/history?page={{.NextPage}}{{if .Search}}&search={{.Search}}{{end}}{{if .Domain}}&domain={{.Domain}}{{end}}{{if .From}}&from={{.From}}{{end}}{{if .To}}&to={{.To}}{{end}}" class="relative inline-flex items-center px-2 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50">
                                 <span class="sr-only">次へ</span>
                                 <svg class="h-5 w-5" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                                     <path fill-rule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clip-rule="evenodd" />
@@ -125,4 +168,64 @@
         </div>
     </div>
 </div>
+
+<!-- 詳細モーダル -->
+<div id="detailModal" class="fixed inset-0 bg-gray-600 bg-opacity-50 hidden overflow-y-auto h-full w-full z-50" onclick="hideDetail()">
+    <div class="relative top-20 mx-auto p-5 border w-11/12 max-w-2xl shadow-lg rounded-md bg-white" onclick="event.stopPropagation()">
+        <div class="mt-3">
+            <div class="flex justify-between items-start mb-4">
+                <h3 class="text-lg font-medium text-gray-900" id="modalTitle">タイトル</h3>
+                <button onclick="hideDetail()" class="text-gray-400 hover:text-gray-600">
+                    <svg class="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                    </svg>
+                </button>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-500">ドメイン</label>
+                    <p class="mt-1 text-sm text-gray-900" id="modalDomain"></p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-500">訪問日時</label>
+                    <p class="mt-1 text-sm text-gray-900" id="modalTime"></p>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-500">URL</label>
+                    <p class="mt-1 text-sm text-gray-900 break-all" id="modalURL"></p>
+                </div>
+                <div class="pt-4">
+                    <a id="modalLink" href="#" target="_blank" rel="noopener noreferrer"
+                        class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700">
+                        URLを開く
+                        <svg class="ml-2 h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path>
+                        </svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function showDetail(title, url, domain, time) {
+    document.getElementById('modalTitle').textContent = title || '(タイトルなし)';
+    document.getElementById('modalURL').textContent = url;
+    document.getElementById('modalDomain').textContent = domain;
+    document.getElementById('modalTime').textContent = time;
+    document.getElementById('modalLink').href = url;
+    document.getElementById('detailModal').classList.remove('hidden');
+}
+
+function hideDetail() {
+    document.getElementById('detailModal').classList.add('hidden');
+}
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        hideDetail();
+    }
+});
+</script>
 {{end}}
