@@ -232,19 +232,25 @@ func TestQueryBuilderWithIgnoreDomains(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithIgnoreDomains([]string{"youtube.com", "google.com"})
 
 	query, args := qb.Build()
+	// 完全一致とサブドメイン除外の両方が含まれるか確認
 	expectedParts := []string{
 		"AND hi.domain_expansion != ?",
+		"AND hi.domain_expansion NOT LIKE ?",
 	}
 	for _, part := range expectedParts {
 		if !containsString(query, part) {
 			t.Errorf("クエリに %q が含まれていない: %q", part, query)
 		}
 	}
-	if len(args) != 2 {
-		t.Errorf("期待値 2個の引数, 実際 %d個", len(args))
+	// 各ドメインに対して2つの引数（完全一致 + サブドメインLIKE）
+	if len(args) != 4 {
+		t.Errorf("期待値 4個の引数, 実際 %d個", len(args))
 	}
-	if args[0] != "youtube.com" || args[1] != "google.com" {
-		t.Errorf("期待値 [youtube.com, google.com], 実際 %v", args)
+	if args[0] != "youtube.com" || args[1] != "%.youtube.com" {
+		t.Errorf("期待値 [youtube.com, %%.youtube.com], 実際 %v", args[:2])
+	}
+	if args[2] != "google.com" || args[3] != "%.google.com" {
+		t.Errorf("期待値 [google.com, %%.google.com], 実際 %v", args[2:])
 	}
 }
 
@@ -273,9 +279,12 @@ func TestQueryBuilderWithFilterIncludesIgnoreDomains(t *testing.T) {
 	if !containsString(query, "AND hi.domain_expansion != ?") {
 		t.Errorf("フィルタにイグノアドメインが適用されていない: %q", query)
 	}
-	// keyword: 2, ignoreDomains: 1
-	if len(args) != 3 {
-		t.Errorf("期待値 3個の引数, 実際 %d個", len(args))
+	if !containsString(query, "AND hi.domain_expansion NOT LIKE ?") {
+		t.Errorf("フィルタにサブドメイン除外が適用されていない: %q", query)
+	}
+	// keyword: 2, ignoreDomains: 2 (完全一致 + サブドメイン)
+	if len(args) != 4 {
+		t.Errorf("期待値 4個の引数, 実際 %d個", len(args))
 	}
 }
 

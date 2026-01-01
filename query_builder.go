@@ -40,11 +40,13 @@ func (qb *QueryBuilder) WithDomain(domain string) *QueryBuilder {
 }
 
 // WithIgnoreDomains は除外ドメイン条件を追加
+// サブドメインも含めて除外（例: "google" → "google", "accounts.google", "docs.google" 等を除外）
 func (qb *QueryBuilder) WithIgnoreDomains(domains []string) *QueryBuilder {
 	for _, d := range domains {
 		if d != "" {
-			qb.where.WriteString(` AND hi.domain_expansion != ?`)
-			qb.args = append(qb.args, d)
+			// 完全一致 OR サブドメイン（末尾が .domain）を除外
+			qb.where.WriteString(` AND hi.domain_expansion != ? AND hi.domain_expansion NOT LIKE ?`)
+			qb.args = append(qb.args, d, "%."+d)
 		}
 	}
 	return qb
