@@ -26,14 +26,8 @@ jobs:
 
       - name: Build binaries
         run: |
-          # macOS (Intel)
-          GOOS=darwin GOARCH=amd64 go build -o dist/hist-darwin-amd64
-          # macOS (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -o dist/hist-darwin-arm64
           # Linux
           GOOS=linux GOARCH=amd64 go build -o dist/hist-linux-amd64
-          # Windows
-          GOOS=windows GOARCH=amd64 go build -o dist/hist-windows-amd64.exe
 
       - name: Create checksums
         run: |
@@ -44,9 +38,6 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/hist-darwin-amd64
-            dist/hist-darwin-arm64
             dist/hist-linux-amd64
-            dist/hist-windows-amd64.exe
             dist/checksums.txt
           generate_release_notes: true
