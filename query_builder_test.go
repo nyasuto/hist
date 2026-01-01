@@ -232,25 +232,27 @@ func TestQueryBuilderWithIgnoreDomains(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithIgnoreDomains([]string{"youtube.com", "google.com"})
 
 	query, args := qb.Build()
-	// 完全一致とサブドメイン除外の両方が含まれるか確認
+	// COALESCE、サブドメイン除外、URL除外が含まれるか確認
 	expectedParts := []string{
-		"AND hi.domain_expansion != ?",
-		"AND hi.domain_expansion NOT LIKE ?",
+		"AND COALESCE(hi.domain_expansion, '') != ?",
+		"AND COALESCE(hi.domain_expansion, '') NOT LIKE ?",
+		"AND hi.url NOT LIKE ?",
 	}
 	for _, part := range expectedParts {
 		if !containsString(query, part) {
 			t.Errorf("クエリに %q が含まれていない: %q", part, query)
 		}
 	}
-	// 各ドメインに対して2つの引数（完全一致 + サブドメインLIKE）
-	if len(args) != 4 {
-		t.Errorf("期待値 4個の引数, 実際 %d個", len(args))
+	// 各ドメインに対して4つの引数（完全一致 + サブドメインLIKE + URL2パターン）
+	if len(args) != 8 {
+		t.Errorf("期待値 8個の引数, 実際 %d個: %v", len(args), args)
 	}
+	// youtube.com用の引数
 	if args[0] != "youtube.com" || args[1] != "%.youtube.com" {
 		t.Errorf("期待値 [youtube.com, %%.youtube.com], 実際 %v", args[:2])
 	}
-	if args[2] != "google.com" || args[3] != "%.google.com" {
-		t.Errorf("期待値 [google.com, %%.google.com], 実際 %v", args[2:])
+	if args[2] != "%://youtube.com.%" || args[3] != "%://%.youtube.com.%" {
+		t.Errorf("期待値 [%%://youtube.com.%%, %%://%%.youtube.com.%%], 実際 %v", args[2:4])
 	}
 }
 
@@ -276,15 +278,15 @@ func TestQueryBuilderWithFilterIncludesIgnoreDomains(t *testing.T) {
 	qb := NewQueryBuilder(baseQuery).WithFilter(filter)
 
 	query, args := qb.Build()
-	if !containsString(query, "AND hi.domain_expansion != ?") {
+	if !containsString(query, "AND COALESCE(hi.domain_expansion, '') != ?") {
 		t.Errorf("フィルタにイグノアドメインが適用されていない: %q", query)
 	}
-	if !containsString(query, "AND hi.domain_expansion NOT LIKE ?") {
-		t.Errorf("フィルタにサブドメイン除外が適用されていない: %q", query)
+	if !containsString(query, "AND hi.url NOT LIKE ?") {
+		t.Errorf("フィルタにURL除外が適用されていない: %q", query)
 	}
-	// keyword: 2, ignoreDomains: 2 (完全一致 + サブドメイン)
-	if len(args) != 4 {
-		t.Errorf("期待値 4個の引数, 実際 %d個", len(args))
+	// keyword: 2, ignoreDomains: 4 (完全一致 + サブドメイン + URL2パターン)
+	if len(args) != 6 {
+		t.Errorf("期待値 6個の引数, 実際 %d個", len(args))
 	}
 }
 

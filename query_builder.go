@@ -41,12 +41,20 @@ func (qb *QueryBuilder) WithDomain(domain string) *QueryBuilder {
 
 // WithIgnoreDomains は除外ドメイン条件を追加
 // サブドメインも含めて除外（例: "google" → "google", "accounts.google", "docs.google" 等を除外）
+// domain_expansionがNULL/空の場合はURLからドメインを判定
 func (qb *QueryBuilder) WithIgnoreDomains(domains []string) *QueryBuilder {
 	for _, d := range domains {
 		if d != "" {
-			// 完全一致 OR サブドメイン（末尾が .domain）を除外
-			qb.where.WriteString(` AND hi.domain_expansion != ? AND hi.domain_expansion NOT LIKE ?`)
-			qb.args = append(qb.args, d, "%."+d)
+			// domain_expansionがNULL/空の場合はURL自体でチェック
+			// NULLの場合: domain_expansion != 'x' は NULL（UNKNOWN）になるため、
+			// COALESCE で空文字列に変換してから比較
+			qb.where.WriteString(` AND COALESCE(hi.domain_expansion, '') != ?`)
+			qb.where.WriteString(` AND COALESCE(hi.domain_expansion, '') NOT LIKE ?`)
+			// URL自体もチェック（domain_expansionがNULLの場合のフォールバック）
+			// ドメイン部分にマッチ: ://domain. または ://domain/ または ://sub.domain.
+			qb.where.WriteString(` AND hi.url NOT LIKE ?`)
+			qb.where.WriteString(` AND hi.url NOT LIKE ?`)
+			qb.args = append(qb.args, d, "%."+d, "%://"+d+".%", "%://%."+d+".%")
 		}
 	}
 	return qb

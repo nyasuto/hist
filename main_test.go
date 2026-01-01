@@ -10,6 +10,34 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+// TestExtractDomain はURLからドメイン抽出のテスト
+func TestExtractDomain(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"HTTPS URL", "https://www.example.com/path", "www.example.com"},
+		{"HTTP URL", "http://example.com/", "example.com"},
+		{"ポート付き", "https://localhost:8080/api", "localhost"},
+		{"クエリ付き", "https://google.com?q=test", "google.com"},
+		{"フラグメント付き", "https://site.com#section", "site.com"},
+		{"パスなし", "https://domain.com", "domain.com"},
+		{"サブドメイン", "https://sub.domain.example.com/page", "sub.domain.example.com"},
+		{"プロトコルなし", "example.com/path", ""},
+		{"空文字列", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractDomain(tt.url)
+			if got != tt.want {
+				t.Errorf("extractDomain(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestConvertCoreDataTimestamp はタイムスタンプ変換のテスト
 func TestConvertCoreDataTimestamp(t *testing.T) {
 	tests := []struct {
@@ -213,10 +241,10 @@ func TestGetDomainStatsWithIgnoreList(t *testing.T) {
 		t.Fatalf("getDomainStats失敗: %v", err)
 	}
 
-	// youtubeが除外されているので2件（github, google）
-	// ※ example.comはdomain_expansion=NULLなのでカウント対象外
-	if len(stats) != 2 {
-		t.Errorf("getDomainStats() with ignore list returned %d items, want 2", len(stats))
+	// youtubeが除外されているので3件（github, google, その他）
+	// ※ example.comはdomain_expansion=NULLなので「その他」として含まれる
+	if len(stats) != 3 {
+		t.Errorf("getDomainStats() with ignore list returned %d items, want 3", len(stats))
 	}
 
 	// youtubeが含まれていないか確認
