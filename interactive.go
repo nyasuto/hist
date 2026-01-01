@@ -54,7 +54,7 @@ type interactiveModel struct {
 func newInteractiveModel(db *sql.DB) interactiveModel {
 	return interactiveModel{
 		db:       db,
-		pageSize: 15,
+		pageSize: DefaultPageSize,
 		filter:   SearchFilter{},
 	}
 }
@@ -96,7 +96,7 @@ func (m interactiveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.windowHeight = msg.Height
 		m.windowWidth = msg.Width
 		// ウィンドウサイズに応じてページサイズを調整
-		m.pageSize = max(5, msg.Height-10)
+		m.pageSize = max(MinPageSize, msg.Height-10)
 		return m, m.loadVisits()
 
 	case visitsLoadedMsg:
@@ -206,7 +206,7 @@ func (m interactiveModel) View() string {
 	// タイトル
 	b.WriteString(titleStyle.Render("Safari 履歴ブラウザ"))
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(50, m.windowWidth)))
+	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
 	b.WriteString("\n\n")
 
 	// エラー表示
@@ -244,14 +244,14 @@ func (m interactiveModel) View() string {
 				title = "(タイトルなし)"
 			}
 			// タイトルを切り詰め
-			maxTitleLen := min(60, m.windowWidth-20)
+			maxTitleLen := min(MaxTitleLength, m.windowWidth-20)
 			if len(title) > maxTitleLen {
 				title = title[:maxTitleLen-3] + "..."
 			}
 
 			line := fmt.Sprintf("%s%s  %s",
 				cursor,
-				v.VisitTime.Format("01/02 15:04"),
+				v.VisitTime.Format(TimeFormatShort),
 				title,
 			)
 
@@ -273,7 +273,7 @@ func (m interactiveModel) View() string {
 
 	// フッター
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(50, m.windowWidth)))
+	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
 	b.WriteString("\n")
 	b.WriteString(fmt.Sprintf("総訪問数: %d\n", m.totalVisits))
 	b.WriteString(helpStyle.Render("↑/↓:移動  Enter:詳細  /:検索  r:更新  q:終了"))
@@ -289,7 +289,7 @@ func (m interactiveModel) renderDetail() string {
 
 	b.WriteString(titleStyle.Render("履歴詳細"))
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(50, m.windowWidth)))
+	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
 	b.WriteString("\n\n")
 
 	title := v.Title
@@ -300,10 +300,10 @@ func (m interactiveModel) renderDetail() string {
 	b.WriteString(fmt.Sprintf("タイトル: %s\n\n", title))
 	b.WriteString(fmt.Sprintf("URL: %s\n\n", v.URL))
 	b.WriteString(fmt.Sprintf("ドメイン: %s\n\n", v.Domain))
-	b.WriteString(fmt.Sprintf("訪問日時: %s\n\n", v.VisitTime.Format("2006-01-02 15:04:05")))
+	b.WriteString(fmt.Sprintf("訪問日時: %s\n\n", v.VisitTime.Format(TimeFormatFull)))
 
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("─", min(50, m.windowWidth)))
+	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
 	b.WriteString("\n")
 	b.WriteString(helpStyle.Render("Enter/Esc/q:戻る"))
 	b.WriteString("\n")
