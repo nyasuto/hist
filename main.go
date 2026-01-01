@@ -482,6 +482,10 @@ func main() {
 	interactive := flag.Bool("interactive", false, "インタラクティブモードで起動")
 	flag.BoolVar(interactive, "i", false, "インタラクティブモードで起動（-interactiveの短縮形）")
 
+	// Webサーバーモード
+	serve := flag.Bool("serve", false, "Webサーバーモードで起動")
+	port := flag.Int("port", 8080, "Webサーバーのポート番号")
+
 	flag.Parse()
 
 	// フィルタ条件を構築
@@ -537,6 +541,20 @@ func main() {
 	// インタラクティブモード
 	if *interactive {
 		if err := runInteractiveMode(db); err != nil {
+			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	// Webサーバーモード
+	if *serve {
+		server, err := NewWebServer(db, *port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
+			os.Exit(1)
+		}
+		if err := server.Start(); err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
 			os.Exit(1)
 		}
