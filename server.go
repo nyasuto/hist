@@ -108,10 +108,10 @@ func (s *WebServer) Start() error {
 
 // DashboardData はダッシュボード用のデータ
 type DashboardData struct {
-	TotalVisits   int
-	DomainStats   []DomainStats
-	RecentVisits  []HistoryVisit
-	MaxDomainHits int
+	TotalVisits             int
+	HierarchicalDomainStats []HierarchicalDomainStats
+	RecentVisits            []HistoryVisit
+	MaxDomainHits           int
 }
 
 // handleDashboard はダッシュボードページを表示
@@ -128,7 +128,7 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filter := SearchFilter{IgnoreDomains: s.ignoreDomains}
-	domainStats, err := getDomainStats(s.db, DefaultDomainLimit, filter)
+	hierarchicalStats, err := getHierarchicalDomainStats(s.db, DefaultDomainLimit, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -141,15 +141,15 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxHits := 0
-	if len(domainStats) > 0 {
-		maxHits = domainStats[0].VisitCount
+	if len(hierarchicalStats) > 0 {
+		maxHits = hierarchicalStats[0].TotalCount
 	}
 
 	data := DashboardData{
-		TotalVisits:   total,
-		DomainStats:   domainStats,
-		RecentVisits:  recentVisits,
-		MaxDomainHits: maxHits,
+		TotalVisits:             total,
+		HierarchicalDomainStats: hierarchicalStats,
+		RecentVisits:            recentVisits,
+		MaxDomainHits:           maxHits,
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "dashboard.html", data); err != nil {

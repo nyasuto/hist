@@ -33,6 +33,20 @@ type DomainStats struct {
 	VisitCount int    `json:"visit_count"`
 }
 
+// SubdomainStats はサブドメイン別の統計情報
+type SubdomainStats struct {
+	Subdomain  string `json:"subdomain"`
+	VisitCount int    `json:"visit_count"`
+}
+
+// HierarchicalDomainStats はベースドメインと関連サブドメインの統計情報
+type HierarchicalDomainStats struct {
+	BaseDomain    string           `json:"base_domain"`
+	TotalCount    int              `json:"total_count"`
+	Subdomains    []SubdomainStats `json:"subdomains"`
+	HasSubdomains bool             `json:"has_subdomains"`
+}
+
 // HourlyStats は時間帯別の統計情報
 type HourlyStats struct {
 	Hour       int `json:"hour"`
@@ -149,6 +163,48 @@ func extractDomain(urlStr string) string {
 	return rest[:end]
 }
 
+// extractBaseDomain はFQDNからベースドメインを抽出する
+// 例: mail.google.com -> google.com, www.example.co.jp -> example.co.jp
+func extractBaseDomain(domain string) string {
+	if domain == "" {
+		return ""
+	}
+
+	// 特殊TLDのリスト（主要なものをカバー）
+	specialTLDs := []string{
+		".co.jp", ".ne.jp", ".or.jp", ".ac.jp", ".go.jp", ".gr.jp", ".ed.jp",
+		".com.au", ".net.au", ".org.au",
+		".co.uk", ".org.uk", ".ac.uk", ".gov.uk",
+		".com.br", ".net.br", ".org.br",
+		".co.nz", ".net.nz", ".org.nz",
+		".co.kr", ".or.kr", ".ne.kr",
+		".com.cn", ".net.cn", ".org.cn",
+		".com.tw", ".net.tw", ".org.tw",
+	}
+
+	// 特殊TLDをチェック
+	for _, tld := range specialTLDs {
+		if strings.HasSuffix(domain, tld) {
+			// TLD直前のドット位置を探す
+			prefix := domain[:len(domain)-len(tld)]
+			lastDot := strings.LastIndex(prefix, ".")
+			if lastDot == -1 {
+				return domain // すでにベースドメイン
+			}
+			return prefix[lastDot+1:] + tld
+		}
+	}
+
+	// 通常のTLD（.com, .org, .net, .jpなど）
+	parts := strings.Split(domain, ".")
+	if len(parts) <= 2 {
+		return domain // すでにベースドメイン
+	}
+
+	// 最後の2つのパートをベースドメインとする
+	return parts[len(parts)-2] + "." + parts[len(parts)-1]
+}
+
 // 履歴取得用のベースクエリ
 const historyBaseQuery = `
 	SELECT
@@ -260,6 +316,85 @@ func getDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]DomainStats, 
 	}
 	sort.Slice(stats, func(i, j int) bool {
 		return stats[i].VisitCount > stats[j].VisitCount
+	})
+
+	// limitで制限
+	if limit > 0 && len(stats) > limit {
+		stats = stats[:limit]
+	}
+
+	return stats, nil
+}
+
+// getHierarchicalDomainStats は階層的なドメイン統計を取得
+func getHierarchicalDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]HierarchicalDomainStats, error) {
+	// 全てのURLとvisit_countを取得
+	query := `SELECT hi.url, hi.visit_count FROM history_items hi`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// ベースドメイン -> サブドメイン -> カウント のマップ
+	baseMap := make(map[string]map[string]int)
+
+	for rows.Next() {
+		var url string
+		var visitCount int
+		if err := rows.Scan(&url, &visitCount); err != nil {
+			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
+		}
+
+		domain := extractDomain(url)
+		if domain == "" {
+			continue
+		}
+
+		// イグノアリストチェック
+		if shouldIgnoreDomain(domain, filter.IgnoreDomains) {
+			continue
+		}
+
+		baseDomain := extractBaseDomain(domain)
+
+		if baseMap[baseDomain] == nil {
+			baseMap[baseDomain] = make(map[string]int)
+		}
+		baseMap[baseDomain][domain] += visitCount
+	}
+
+	// 階層構造に変換
+	var stats []HierarchicalDomainStats
+	for baseDomain, subdomains := range baseMap {
+		totalCount := 0
+		var subStats []SubdomainStats
+
+		for subdomain, count := range subdomains {
+			totalCount += count
+			subStats = append(subStats, SubdomainStats{
+				Subdomain:  subdomain,
+				VisitCount: count,
+			})
+		}
+
+		// サブドメインをカウント順にソート
+		sort.Slice(subStats, func(i, j int) bool {
+			return subStats[i].VisitCount > subStats[j].VisitCount
+		})
+
+		stats = append(stats, HierarchicalDomainStats{
+			BaseDomain:    baseDomain,
+			TotalCount:    totalCount,
+			Subdomains:    subStats,
+			HasSubdomains: len(subStats) > 1,
+		})
+	}
+
+	// 合計カウント順にソート
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].TotalCount > stats[j].TotalCount
 	})
 
 	// limitで制限
