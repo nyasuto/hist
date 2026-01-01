@@ -416,3 +416,179 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+// TestExtractBaseDomain はベースドメイン抽出のテスト
+func TestExtractBaseDomain(t *testing.T) {
+	tests := []struct {
+		name   string
+		domain string
+		want   string
+	}{
+		{"シンプルなドメイン", "example.com", "example.com"},
+		{"www付き", "www.example.com", "example.com"},
+		{"サブドメイン付き", "mail.google.com", "google.com"},
+		{"複数サブドメイン", "api.v2.example.com", "example.com"},
+		{"日本の特殊TLD", "www.example.co.jp", "example.co.jp"},
+		{"イギリスの特殊TLD", "shop.example.co.uk", "example.co.uk"},
+		{"オーストラリアの特殊TLD", "api.example.com.au", "example.com.au"},
+		{"ブラジルの特殊TLD", "www.example.com.br", "example.com.br"},
+		{"アカデミックドメイン", "lib.example.ac.jp", "example.ac.jp"},
+		{"政府ドメイン", "portal.example.gov", "example.gov"},
+		{"組織ドメイン", "www.example.org", "example.org"},
+		{"or.jpドメイン", "www.example.or.jp", "example.or.jp"},
+		{"ne.jpドメイン", "api.example.ne.jp", "example.ne.jp"},
+		{"短いドメイン", "a.com", "a.com"},
+		{"2文字ドメイン", "io.com", "io.com"},
+		{"TLDのみ", "com", "com"},
+		{"空文字列", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBaseDomain(tt.domain)
+			if got != tt.want {
+				t.Errorf("extractBaseDomain(%q) = %q, want %q", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetHierarchicalDomainStats は階層的ドメイン統計取得のテスト
+func TestGetHierarchicalDomainStats(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// サブドメインを含むテストデータを挿入
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(10, 'https://www.google.com/search', 'www.google', 10),
+		(11, 'https://mail.google.com/inbox', 'mail.google', 8),
+		(12, 'https://docs.google.com/doc', 'docs.google', 5),
+		(13, 'https://github.com/repo', 'github', 15),
+		(14, 'https://api.github.com/v1', 'api.github', 3);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(10, 10, ?, 'Google Search'),
+		(11, 10, ?, 'Google Search 2'),
+		(12, 11, ?, 'Gmail'),
+		(13, 12, ?, 'Google Docs'),
+		(14, 13, ?, 'GitHub Repo'),
+		(15, 13, ?, 'GitHub Repo 2'),
+		(16, 13, ?, 'GitHub Repo 3'),
+		(17, 14, ?, 'GitHub API');
+	`, baseTime, baseTime+100, baseTime+200, baseTime+300, baseTime+400, baseTime+500, baseTime+600, baseTime+700)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	stats, err := getHierarchicalDomainStats(db, 10, SearchFilter{})
+	if err != nil {
+		t.Fatalf("getHierarchicalDomainStats失敗: %v", err)
+	}
+
+	// google.com と github.com の2つのベースドメインがある
+	if len(stats) < 2 {
+		t.Errorf("getHierarchicalDomainStats() returned %d items, want at least 2", len(stats))
+	}
+
+	// 最初のエントリはgoogle.com（visit_count合計: 10+8+5=23）
+	// visit_countはhistory_items.visit_countを使用
+	if len(stats) > 0 && stats[0].BaseDomain != "google.com" {
+		t.Errorf("最多訪問ドメインが期待と異なる: got %s, want google.com", stats[0].BaseDomain)
+	}
+
+	// github.comはサブドメインを持つ（visit_count合計: 15+3=18）
+	var githubStats *HierarchicalDomainStats
+	for i := range stats {
+		if stats[i].BaseDomain == "github.com" {
+			githubStats = &stats[i]
+			break
+		}
+	}
+
+	if githubStats != nil {
+		if !githubStats.HasSubdomains {
+			t.Error("github.comにはサブドメインがあるはず")
+		}
+		if len(githubStats.Subdomains) != 2 {
+			t.Errorf("github.comのサブドメイン数 = %d, want 2", len(githubStats.Subdomains))
+		}
+		// 合計カウント（history_items.visit_count: 15+3=18）
+		if githubStats.TotalCount != 18 {
+			t.Errorf("github.comの合計訪問数 = %d, want 18", githubStats.TotalCount)
+		}
+	} else {
+		t.Error("github.comの統計が見つからない")
+	}
+
+	// google.comもサブドメインを持つ（visit_count合計: 10+8+5=23）
+	var googleStats *HierarchicalDomainStats
+	for i := range stats {
+		if stats[i].BaseDomain == "google.com" {
+			googleStats = &stats[i]
+			break
+		}
+	}
+
+	if googleStats != nil {
+		if !googleStats.HasSubdomains {
+			t.Error("google.comにはサブドメインがあるはず")
+		}
+		if len(googleStats.Subdomains) != 3 {
+			t.Errorf("google.comのサブドメイン数 = %d, want 3", len(googleStats.Subdomains))
+		}
+		// 合計カウント（history_items.visit_count: 10+8+5=23）
+		if googleStats.TotalCount != 23 {
+			t.Errorf("google.comの合計訪問数 = %d, want 23", googleStats.TotalCount)
+		}
+	} else {
+		t.Error("google.comの統計が見つからない")
+	}
+}
+
+// TestGetHierarchicalDomainStatsWithIgnoreList はイグノアリスト付き階層ドメイン統計のテスト
+func TestGetHierarchicalDomainStatsWithIgnoreList(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(20, 'https://www.google.com/search', 'www.google', 10),
+		(21, 'https://github.com/repo', 'github', 15);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(20, 20, ?, 'Google Search'),
+		(21, 21, ?, 'GitHub Repo');
+	`, baseTime, baseTime+100)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	// googleをイグノア
+	filter := SearchFilter{IgnoreDomains: []string{"google"}}
+	stats, err := getHierarchicalDomainStats(db, 10, filter)
+	if err != nil {
+		t.Fatalf("getHierarchicalDomainStats失敗: %v", err)
+	}
+
+	// google.comが除外されているので1件のみ
+	if len(stats) != 1 {
+		t.Errorf("getHierarchicalDomainStats with ignore returned %d items, want 1", len(stats))
+	}
+
+	if len(stats) > 0 && stats[0].BaseDomain != "github.com" {
+		t.Errorf("残るドメインが期待と異なる: got %s, want github.com", stats[0].BaseDomain)
+	}
+}

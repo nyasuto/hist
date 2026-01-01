@@ -10,6 +10,12 @@
         .bar {
             transition: width 0.3s ease;
         }
+        details[open] > summary .chevron {
+            transform: rotate(90deg);
+        }
+        .chevron {
+            transition: transform 0.2s ease;
+        }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen">
@@ -49,7 +55,7 @@
                     <div class="ml-5 w-0 flex-1">
                         <dl>
                             <dt class="text-sm font-medium text-gray-500 truncate">ドメイン数</dt>
-                            <dd class="text-3xl font-semibold text-gray-900">{{len .DomainStats}}</dd>
+                            <dd class="text-3xl font-semibold text-gray-900">{{len .HierarchicalDomainStats}}</dd>
                         </dl>
                     </div>
                 </div>
@@ -68,7 +74,7 @@
                         <dl>
                             <dt class="text-sm font-medium text-gray-500 truncate">トップドメイン</dt>
                             <dd class="text-3xl font-semibold text-gray-900">
-                                {{if .DomainStats}}{{(index .DomainStats 0).Domain}}{{else}}-{{end}}
+                                {{if .HierarchicalDomainStats}}{{(index .HierarchicalDomainStats 0).BaseDomain}}{{else}}-{{end}}
                             </dd>
                         </dl>
                     </div>
@@ -78,21 +84,52 @@
     </div>
 
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        <!-- ドメイン別統計 -->
+        <!-- ドメイン別統計（階層表示） -->
         <div class="bg-white shadow rounded-lg">
             <div class="px-4 py-5 sm:p-6">
                 <h3 class="text-lg leading-6 font-medium text-gray-900 mb-4">ドメイン別訪問数（Top 10）</h3>
-                <div class="space-y-3">
-                    {{range .DomainStats}}
-                    <div class="flex items-center">
-                        <div class="w-32 truncate text-sm text-gray-600">{{.Domain}}</div>
+                <div class="space-y-2">
+                    {{range .HierarchicalDomainStats}}
+                    {{if .HasSubdomains}}
+                    <details class="group">
+                        <summary class="flex items-center cursor-pointer list-none hover:bg-gray-50 rounded p-1 -ml-1">
+                            <svg class="chevron w-4 h-4 text-gray-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                            </svg>
+                            <div class="w-32 truncate text-sm font-medium text-gray-700">{{.BaseDomain}}</div>
+                            <div class="flex-1 mx-4">
+                                <div class="bg-gray-200 rounded-full h-4">
+                                    <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .TotalCount $.MaxDomainHits}}%"></div>
+                                </div>
+                            </div>
+                            <div class="w-16 text-right text-sm font-medium text-gray-700">{{.TotalCount}}</div>
+                        </summary>
+                        <div class="ml-6 mt-1 space-y-1 border-l-2 border-gray-200 pl-4">
+                            {{range .Subdomains}}
+                            <a href="/history?domain={{.Subdomain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1 group/item">
+                                <div class="w-32 truncate text-sm text-gray-600 group-hover/item:text-blue-600">{{.Subdomain}}</div>
+                                <div class="flex-1 mx-4">
+                                    <div class="bg-gray-100 rounded-full h-3">
+                                        <div class="bg-blue-400 rounded-full h-3 bar" style="width: {{percentage .VisitCount $.MaxDomainHits}}%"></div>
+                                    </div>
+                                </div>
+                                <div class="w-16 text-right text-sm text-gray-500">{{.VisitCount}}</div>
+                            </a>
+                            {{end}}
+                        </div>
+                    </details>
+                    {{else}}
+                    <a href="/history?domain={{(index .Subdomains 0).Subdomain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1">
+                        <div class="w-6 mr-2"></div>
+                        <div class="w-32 truncate text-sm text-gray-600 hover:text-blue-600">{{.BaseDomain}}</div>
                         <div class="flex-1 mx-4">
                             <div class="bg-gray-200 rounded-full h-4">
-                                <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .VisitCount $.MaxDomainHits}}%"></div>
+                                <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .TotalCount $.MaxDomainHits}}%"></div>
                             </div>
                         </div>
-                        <div class="w-16 text-right text-sm text-gray-600">{{.VisitCount}}</div>
-                    </div>
+                        <div class="w-16 text-right text-sm text-gray-600">{{.TotalCount}}</div>
+                    </a>
+                    {{end}}
                     {{end}}
                 </div>
             </div>
