@@ -219,12 +219,13 @@ func TestGetDomainStats(t *testing.T) {
 		t.Fatalf("getDomainStats失敗: %v", err)
 	}
 
+	// URLから抽出したドメイン: github.com, youtube.com, google.com, example.com
 	if len(stats) != 4 {
 		t.Errorf("getDomainStats() returned %d items, want 4", len(stats))
 	}
 
-	// 訪問数順にソートされているか
-	if stats[0].Domain != "youtube" || stats[0].VisitCount != 25 {
+	// 訪問数順にソートされているか（youtube.com: 25）
+	if stats[0].Domain != "youtube.com" || stats[0].VisitCount != 25 {
 		t.Errorf("最多訪問ドメインが期待と異なる: got %s (%d)", stats[0].Domain, stats[0].VisitCount)
 	}
 }
@@ -235,21 +236,21 @@ func TestGetDomainStatsWithIgnoreList(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	insertTestData(t, db)
 
-	filter := SearchFilter{IgnoreDomains: []string{"youtube"}}
+	// "youtube"を指定すると youtube.com がマッチする
+	filter := SearchFilter{IgnoreDomains: []string{"youtube.com"}}
 	stats, err := getDomainStats(db, 10, filter)
 	if err != nil {
 		t.Fatalf("getDomainStats失敗: %v", err)
 	}
 
-	// youtubeが除外されているので3件（github, google, その他）
-	// ※ example.comはdomain_expansion=NULLなので「その他」として含まれる
+	// youtube.comが除外されているので3件（github.com, google.com, example.com）
 	if len(stats) != 3 {
 		t.Errorf("getDomainStats() with ignore list returned %d items, want 3", len(stats))
 	}
 
-	// youtubeが含まれていないか確認
+	// youtube.comが含まれていないか確認
 	for _, s := range stats {
-		if s.Domain == "youtube" {
+		if s.Domain == "youtube.com" {
 			t.Error("イグノアリストで指定したドメインが結果に含まれている")
 		}
 	}
