@@ -73,13 +73,13 @@ func getDBPath() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("ホームディレクトリの取得に失敗: %w", err)
 	}
-	return filepath.Join(homeDir, "Library", "Safari", "History.db"), nil
+	return filepath.Join(homeDir, SafariHistoryPath), nil
 }
 
 // openDB はSafari履歴DBを開く（読み取り専用）
 func openDB(dbPath string) (*sql.DB, error) {
 	// 読み取り専用モードで開く
-	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	db, err := sql.Open(SQLiteDriver, dbPath+SQLiteReadOnlyMode)
 	if err != nil {
 		return nil, fmt.Errorf("データベースを開けませんでした: %w", err)
 	}
@@ -220,7 +220,7 @@ func getDailyStats(db *sql.DB, days int, filter SearchFilter) ([]DailyStats, err
 		}
 		t := convertCoreDataTimestamp(visitTime)
 		if t.After(cutoff) {
-			dateStr := t.Format("2006-01-02")
+			dateStr := t.Format(TimeFormatDate)
 			dateCounts[dateStr]++
 		}
 	}
@@ -264,7 +264,7 @@ func writeCSV(w io.Writer, result AnalysisResult, showHistory, showDomains, show
 		}
 		for _, v := range result.RecentVisits {
 			record := []string{
-				v.VisitTime.Format("2006-01-02 15:04:05"),
+				v.VisitTime.Format(TimeFormatFull),
 				v.Title,
 				v.Domain,
 				v.URL,
@@ -346,10 +346,10 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 			if title == "" {
 				title = "(タイトルなし)"
 			}
-			if len(title) > 50 {
-				title = title[:47] + "..."
+			if len(title) > TitleTruncateLength {
+				title = title[:TitleTruncateLength-3] + "..."
 			}
-			fmt.Printf("  %s  %s\n", v.VisitTime.Format("2006-01-02 15:04"), title)
+			fmt.Printf("  %s  %s\n", v.VisitTime.Format(TimeFormatDateTime), title)
 			if v.Domain != "" {
 				fmt.Printf("              📍 %s\n", v.Domain)
 			}
@@ -362,7 +362,7 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 		fmt.Printf("─────────────────────────────────────────\n")
 		maxCount := result.DomainStats[0].VisitCount
 		for _, s := range result.DomainStats {
-			barLen := int(float64(s.VisitCount) / float64(maxCount) * 20)
+			barLen := int(float64(s.VisitCount) / float64(maxCount) * BarChartWidth)
 			bar := strings.Repeat("█", barLen)
 			fmt.Printf("  %-20s %s %d\n", s.Domain, bar, s.VisitCount)
 		}
@@ -381,7 +381,7 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 		for _, s := range result.HourlyStats {
 			barLen := 0
 			if maxCount > 0 {
-				barLen = int(float64(s.VisitCount) / float64(maxCount) * 20)
+				barLen = int(float64(s.VisitCount) / float64(maxCount) * BarChartWidth)
 			}
 			bar := strings.Repeat("█", barLen)
 			fmt.Printf("  %02d:00  %s %d\n", s.Hour, bar, s.VisitCount)
@@ -401,7 +401,7 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 		for _, s := range result.DailyStats {
 			barLen := 0
 			if maxCount > 0 {
-				barLen = int(float64(s.VisitCount) / float64(maxCount) * 20)
+				barLen = int(float64(s.VisitCount) / float64(maxCount) * BarChartWidth)
 			}
 			bar := strings.Repeat("█", barLen)
 			fmt.Printf("  %s  %s %d\n", s.Date, bar, s.VisitCount)
@@ -413,9 +413,9 @@ func printTextOutput(result AnalysisResult, showHistory, showDomains, showHourly
 func main() {
 	// コマンドラインフラグの定義
 	jsonOutput := flag.Bool("json", false, "JSON形式で出力")
-	limit := flag.Int("limit", 20, "表示する履歴の件数")
-	domainLimit := flag.Int("domains", 10, "表示するドメイン統計の件数")
-	days := flag.Int("days", 7, "日別統計の対象日数")
+	limit := flag.Int("limit", DefaultHistoryLimit, "表示する履歴の件数")
+	domainLimit := flag.Int("domains", DefaultDomainLimit, "表示するドメイン統計の件数")
+	days := flag.Int("days", DefaultDailyDays, "日別統計の対象日数")
 
 	showHistory := flag.Bool("history", false, "履歴一覧を表示")
 	showDomains := flag.Bool("domain-stats", false, "ドメイン別統計を表示")
@@ -440,7 +440,7 @@ func main() {
 
 	// Webサーバーモード
 	serve := flag.Bool("serve", false, "Webサーバーモードで起動")
-	port := flag.Int("port", 8080, "Webサーバーのポート番号")
+	port := flag.Int("port", DefaultWebPort, "Webサーバーのポート番号")
 
 	flag.Parse()
 
@@ -450,7 +450,7 @@ func main() {
 	filter.Domain = *domain
 
 	if *fromDate != "" {
-		t, err := time.Parse("2006-01-02", *fromDate)
+		t, err := time.Parse(TimeFormatDate, *fromDate)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: 開始日の形式が不正です（YYYY-MM-DD）: %v\n", err)
 			os.Exit(1)
@@ -458,7 +458,7 @@ func main() {
 		filter.From = t
 	}
 	if *toDate != "" {
-		t, err := time.Parse("2006-01-02", *toDate)
+		t, err := time.Parse(TimeFormatDate, *toDate)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: 終了日の形式が不正です（YYYY-MM-DD）: %v\n", err)
 			os.Exit(1)

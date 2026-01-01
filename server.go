@@ -21,10 +21,10 @@ var staticFS embed.FS
 // テンプレート関数
 var templateFuncs = template.FuncMap{
 	"formatTime": func(t time.Time) string {
-		return t.Format("2006-01-02 15:04:05")
+		return t.Format(TimeFormatFull)
 	},
 	"formatDate": func(t time.Time) string {
-		return t.Format("2006-01-02")
+		return t.Format(TimeFormatDate)
 	},
 	"truncate": func(s string, length int) string {
 		if len(s) <= length {
@@ -119,13 +119,13 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, 10)
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	recentVisits, err := getRecentVisits(s.db, 5, SearchFilter{})
+	recentVisits, err := getRecentVisits(s.db, WebDashboardRecentVisits, SearchFilter{})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -185,17 +185,17 @@ func (s *WebServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 	filter.Domain = domainQuery
 
 	if fromQuery != "" {
-		if t, err := time.Parse("2006-01-02", fromQuery); err == nil {
+		if t, err := time.Parse(TimeFormatDate, fromQuery); err == nil {
 			filter.From = t
 		}
 	}
 	if toQuery != "" {
-		if t, err := time.Parse("2006-01-02", toQuery); err == nil {
+		if t, err := time.Parse(TimeFormatDate, toQuery); err == nil {
 			filter.To = t
 		}
 	}
 
-	perPage := 50
+	perPage := WebPageSize
 	offset := (page - 1) * perPage
 
 	// フィルタ付きの総件数を取得
@@ -252,7 +252,7 @@ func (s *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, 10)
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -278,7 +278,7 @@ func (s *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 
 // handleAPIHistory は履歴データをJSONで返す
 func (s *WebServer) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
-	limit := 50
+	limit := WebPageSize
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 {
 			limit = parsed
@@ -367,7 +367,7 @@ type StatsPageData struct {
 // handleStatsPage は統計ページを表示
 func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 	domainQuery := r.URL.Query().Get("domain")
-	days := 30
+	days := WebDefaultDays
 	if d := r.URL.Query().Get("days"); d != "" {
 		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
 			days = parsed
@@ -388,7 +388,7 @@ func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, 10)
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -434,7 +434,7 @@ func (s *WebServer) handleAPIStatsHourly(w http.ResponseWriter, r *http.Request)
 // handleAPIStatsDaily は日別統計をJSONで返す
 func (s *WebServer) handleAPIStatsDaily(w http.ResponseWriter, r *http.Request) {
 	domainQuery := r.URL.Query().Get("domain")
-	days := 30
+	days := WebDefaultDays
 	if d := r.URL.Query().Get("days"); d != "" {
 		if parsed, err := strconv.Atoi(d); err == nil && parsed > 0 {
 			days = parsed
