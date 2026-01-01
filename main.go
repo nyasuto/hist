@@ -43,6 +43,14 @@ type DailyStats struct {
 	VisitCount int    `json:"visit_count"`
 }
 
+// SearchFilter は検索・フィルタ条件を表す
+type SearchFilter struct {
+	Keyword string
+	Domain  string
+	From    time.Time
+	To      time.Time
+}
+
 // AnalysisResult は分析結果全体を表す
 type AnalysisResult struct {
 	TotalVisits  int            `json:"total_visits"`
@@ -76,8 +84,13 @@ func openDB(dbPath string) (*sql.DB, error) {
 	return db, nil
 }
 
+// convertToTimestamp は時刻をCore Data timestamp形式に変換
+func convertToTimestamp(t time.Time) float64 {
+	return t.Sub(coreDataEpoch).Seconds()
+}
+
 // getRecentVisits は最近の訪問履歴を取得
-func getRecentVisits(db *sql.DB, limit int) ([]HistoryVisit, error) {
+func getRecentVisits(db *sql.DB, limit int, filter SearchFilter) ([]HistoryVisit, error) {
 	query := `
 		SELECT
 			hi.url,
@@ -86,10 +99,37 @@ func getRecentVisits(db *sql.DB, limit int) ([]HistoryVisit, error) {
 			hv.visit_time
 		FROM history_visits hv
 		JOIN history_items hi ON hv.history_item = hi.id
-		ORDER BY hv.visit_time DESC
-		LIMIT ?
+		WHERE 1=1
 	`
-	rows, err := db.Query(query, limit)
+	args := []interface{}{}
+
+	// キーワード検索
+	if filter.Keyword != "" {
+		query += ` AND (hi.url LIKE ? OR hv.title LIKE ?)`
+		keyword := "%" + filter.Keyword + "%"
+		args = append(args, keyword, keyword)
+	}
+
+	// ドメインフィルタ
+	if filter.Domain != "" {
+		query += ` AND hi.domain_expansion = ?`
+		args = append(args, filter.Domain)
+	}
+
+	// 日付範囲フィルタ
+	if !filter.From.IsZero() {
+		query += ` AND hv.visit_time >= ?`
+		args = append(args, convertToTimestamp(filter.From))
+	}
+	if !filter.To.IsZero() {
+		query += ` AND hv.visit_time <= ?`
+		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
+	}
+
+	query += ` ORDER BY hv.visit_time DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("履歴の取得に失敗: %w", err)
 	}
@@ -137,11 +177,28 @@ func getDomainStats(db *sql.DB, limit int) ([]DomainStats, error) {
 }
 
 // getHourlyStats は時間帯別の訪問統計を取得
-func getHourlyStats(db *sql.DB) ([]HourlyStats, error) {
+func getHourlyStats(db *sql.DB, filter SearchFilter) ([]HourlyStats, error) {
 	query := `
-		SELECT visit_time FROM history_visits
+		SELECT hv.visit_time FROM history_visits hv
+		JOIN history_items hi ON hv.history_item = hi.id
+		WHERE 1=1
 	`
-	rows, err := db.Query(query)
+	args := []interface{}{}
+
+	if filter.Domain != "" {
+		query += ` AND hi.domain_expansion = ?`
+		args = append(args, filter.Domain)
+	}
+	if !filter.From.IsZero() {
+		query += ` AND hv.visit_time >= ?`
+		args = append(args, convertToTimestamp(filter.From))
+	}
+	if !filter.To.IsZero() {
+		query += ` AND hv.visit_time <= ?`
+		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
+	}
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("時間帯統計の取得に失敗: %w", err)
 	}
@@ -168,11 +225,28 @@ func getHourlyStats(db *sql.DB) ([]HourlyStats, error) {
 }
 
 // getDailyStats は日別の訪問統計を取得（過去N日間）
-func getDailyStats(db *sql.DB, days int) ([]DailyStats, error) {
+func getDailyStats(db *sql.DB, days int, filter SearchFilter) ([]DailyStats, error) {
 	query := `
-		SELECT visit_time FROM history_visits
+		SELECT hv.visit_time FROM history_visits hv
+		JOIN history_items hi ON hv.history_item = hi.id
+		WHERE 1=1
 	`
-	rows, err := db.Query(query)
+	args := []interface{}{}
+
+	if filter.Domain != "" {
+		query += ` AND hi.domain_expansion = ?`
+		args = append(args, filter.Domain)
+	}
+	if !filter.From.IsZero() {
+		query += ` AND hv.visit_time >= ?`
+		args = append(args, convertToTimestamp(filter.From))
+	}
+	if !filter.To.IsZero() {
+		query += ` AND hv.visit_time <= ?`
+		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
+	}
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("日別統計の取得に失敗: %w", err)
 	}
@@ -310,7 +384,35 @@ func main() {
 	showDaily := flag.Bool("daily", false, "日別統計を表示")
 	showAll := flag.Bool("all", false, "全ての分析結果を表示")
 
+	// 検索・フィルタオプション
+	search := flag.String("search", "", "キーワード検索（URL・タイトル）")
+	domain := flag.String("domain", "", "ドメインでフィルタ")
+	fromDate := flag.String("from", "", "開始日（YYYY-MM-DD）")
+	toDate := flag.String("to", "", "終了日（YYYY-MM-DD）")
+
 	flag.Parse()
+
+	// フィルタ条件を構築
+	var filter SearchFilter
+	filter.Keyword = *search
+	filter.Domain = *domain
+
+	if *fromDate != "" {
+		t, err := time.Parse("2006-01-02", *fromDate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "エラー: 開始日の形式が不正です（YYYY-MM-DD）: %v\n", err)
+			os.Exit(1)
+		}
+		filter.From = t
+	}
+	if *toDate != "" {
+		t, err := time.Parse("2006-01-02", *toDate)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "エラー: 終了日の形式が不正です（YYYY-MM-DD）: %v\n", err)
+			os.Exit(1)
+		}
+		filter.To = t
+	}
 
 	// -all が指定された場合は全て表示
 	if *showAll {
@@ -352,7 +454,7 @@ func main() {
 
 	// 各種統計を取得
 	if *showHistory {
-		result.RecentVisits, err = getRecentVisits(db, *limit)
+		result.RecentVisits, err = getRecentVisits(db, *limit, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
 			os.Exit(1)
@@ -368,7 +470,7 @@ func main() {
 	}
 
 	if *showHourly {
-		result.HourlyStats, err = getHourlyStats(db)
+		result.HourlyStats, err = getHourlyStats(db, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
 			os.Exit(1)
@@ -376,7 +478,7 @@ func main() {
 	}
 
 	if *showDaily {
-		result.DailyStats, err = getDailyStats(db, *days)
+		result.DailyStats, err = getDailyStats(db, *days, filter)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "エラー: %v\n", err)
 			os.Exit(1)

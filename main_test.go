@@ -131,7 +131,7 @@ func TestGetRecentVisits(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	insertTestData(t, db)
 
-	visits, err := getRecentVisits(db, 3)
+	visits, err := getRecentVisits(db, 3, SearchFilter{})
 	if err != nil {
 		t.Fatalf("getRecentVisits失敗: %v", err)
 	}
@@ -143,6 +143,40 @@ func TestGetRecentVisits(t *testing.T) {
 	// 最新のものが最初に来ているか確認
 	if visits[0].Title != "YouTube - Music" {
 		t.Errorf("最新の訪問タイトルが期待と異なる: got %s", visits[0].Title)
+	}
+}
+
+// TestGetRecentVisitsWithKeywordFilter はキーワード検索のテスト
+func TestGetRecentVisitsWithKeywordFilter(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+	insertTestData(t, db)
+
+	filter := SearchFilter{Keyword: "GitHub"}
+	visits, err := getRecentVisits(db, 10, filter)
+	if err != nil {
+		t.Fatalf("getRecentVisits失敗: %v", err)
+	}
+
+	if len(visits) != 2 {
+		t.Errorf("キーワード'GitHub'で%d件、期待は2件", len(visits))
+	}
+}
+
+// TestGetRecentVisitsWithDomainFilter はドメインフィルタのテスト
+func TestGetRecentVisitsWithDomainFilter(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+	insertTestData(t, db)
+
+	filter := SearchFilter{Domain: "youtube"}
+	visits, err := getRecentVisits(db, 10, filter)
+	if err != nil {
+		t.Fatalf("getRecentVisits失敗: %v", err)
+	}
+
+	if len(visits) != 2 {
+		t.Errorf("ドメイン'youtube'で%d件、期待は2件", len(visits))
 	}
 }
 
@@ -173,7 +207,7 @@ func TestGetHourlyStats(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	insertTestData(t, db)
 
-	stats, err := getHourlyStats(db)
+	stats, err := getHourlyStats(db, SearchFilter{})
 	if err != nil {
 		t.Fatalf("getHourlyStats失敗: %v", err)
 	}
@@ -189,6 +223,28 @@ func TestGetHourlyStats(t *testing.T) {
 	}
 }
 
+// TestGetHourlyStatsWithDomainFilter はドメインフィルタ付き時間帯統計のテスト
+func TestGetHourlyStatsWithDomainFilter(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+	insertTestData(t, db)
+
+	filter := SearchFilter{Domain: "github"}
+	stats, err := getHourlyStats(db, filter)
+	if err != nil {
+		t.Fatalf("getHourlyStats失敗: %v", err)
+	}
+
+	// 合計訪問数を確認（githubは2件）
+	total := 0
+	for _, s := range stats {
+		total += s.VisitCount
+	}
+	if total != 2 {
+		t.Errorf("githubドメインの合計訪問数 = %d, want 2", total)
+	}
+}
+
 // TestGetDailyStats は日別統計取得のテスト
 func TestGetDailyStats(t *testing.T) {
 	db := setupTestDB(t)
@@ -196,7 +252,7 @@ func TestGetDailyStats(t *testing.T) {
 	insertTestData(t, db)
 
 	// 過去30日間の統計
-	stats, err := getDailyStats(db, 30)
+	stats, err := getDailyStats(db, 30, SearchFilter{})
 	if err != nil {
 		t.Fatalf("getDailyStats失敗: %v", err)
 	}
