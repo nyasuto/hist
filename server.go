@@ -299,89 +299,27 @@ func (s *WebServer) handleAPIHistory(w http.ResponseWriter, r *http.Request) {
 
 // getRecentVisitsWithOffset はオフセット付きで履歴を取得
 func getRecentVisitsWithOffset(db *sql.DB, limit, offset int, filter SearchFilter) ([]HistoryVisit, error) {
-	query := `
-		SELECT
-			hi.url,
-			COALESCE(hv.title, '') as title,
-			COALESCE(hi.domain_expansion, '') as domain,
-			hv.visit_time
-		FROM history_visits hv
-		JOIN history_items hi ON hv.history_item = hi.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
+	qb := NewQueryBuilder(historyBaseQuery).
+		WithFilter(filter).
+		OrderByDesc("hv.visit_time").
+		Limit(limit).
+		Offset(offset)
 
-	if filter.Keyword != "" {
-		query += ` AND (hi.url LIKE ? OR hv.title LIKE ?)`
-		keyword := "%" + filter.Keyword + "%"
-		args = append(args, keyword, keyword)
-	}
-
-	if filter.Domain != "" {
-		query += ` AND hi.domain_expansion = ?`
-		args = append(args, filter.Domain)
-	}
-
-	if !filter.From.IsZero() {
-		query += ` AND hv.visit_time >= ?`
-		args = append(args, convertToTimestamp(filter.From))
-	}
-	if !filter.To.IsZero() {
-		query += ` AND hv.visit_time <= ?`
-		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
-	}
-
-	query += ` ORDER BY hv.visit_time DESC LIMIT ? OFFSET ?`
-	args = append(args, limit, offset)
-
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("履歴の取得に失敗: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var visits []HistoryVisit
-	for rows.Next() {
-		var v HistoryVisit
-		var visitTime float64
-		if err := rows.Scan(&v.URL, &v.Title, &v.Domain, &visitTime); err != nil {
-			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
-		}
-		v.VisitTime = convertCoreDataTimestamp(visitTime)
-		visits = append(visits, v)
-	}
-	return visits, nil
+	query, args := qb.Build()
+	return executeHistoryQuery(db, query, args)
 }
+
+// カウント取得用のベースクエリ
+const countBaseQuery = `
+	SELECT COUNT(*)
+	FROM history_visits hv
+	JOIN history_items hi ON hv.history_item = hi.id
+	WHERE 1=1`
 
 // getFilteredVisitCount はフィルタ条件に一致する訪問数を取得
 func getFilteredVisitCount(db *sql.DB, filter SearchFilter) (int, error) {
-	query := `
-		SELECT COUNT(*)
-		FROM history_visits hv
-		JOIN history_items hi ON hv.history_item = hi.id
-		WHERE 1=1
-	`
-	args := []interface{}{}
-
-	if filter.Keyword != "" {
-		query += ` AND (hi.url LIKE ? OR hv.title LIKE ?)`
-		keyword := "%" + filter.Keyword + "%"
-		args = append(args, keyword, keyword)
-	}
-
-	if filter.Domain != "" {
-		query += ` AND hi.domain_expansion = ?`
-		args = append(args, filter.Domain)
-	}
-
-	if !filter.From.IsZero() {
-		query += ` AND hv.visit_time >= ?`
-		args = append(args, convertToTimestamp(filter.From))
-	}
-	if !filter.To.IsZero() {
-		query += ` AND hv.visit_time <= ?`
-		args = append(args, convertToTimestamp(filter.To.Add(24*time.Hour-time.Second)))
-	}
+	qb := NewQueryBuilder(countBaseQuery).WithFilter(filter)
+	query, args := qb.Build()
 
 	var count int
 	err := db.QueryRow(query, args...).Scan(&count)
