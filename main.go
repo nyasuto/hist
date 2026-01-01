@@ -162,13 +162,38 @@ const historyBaseQuery = `
 
 // getRecentVisits は最近の訪問履歴を取得
 func getRecentVisits(db *sql.DB, limit int, filter SearchFilter) ([]HistoryVisit, error) {
+	// イグノアリストがある場合、多めに取得してGoでフィルタ
+	fetchLimit := limit
+	if len(filter.IgnoreDomains) > 0 {
+		fetchLimit = limit * 3 // フィルタ後にlimit件取得できるよう多めに
+	}
+
 	qb := NewQueryBuilder(historyBaseQuery).
 		WithFilter(filter).
 		OrderByDesc("hv.visit_time").
-		Limit(limit)
+		Limit(fetchLimit)
 
 	query, args := qb.Build()
-	return executeHistoryQuery(db, query, args)
+	visits, err := executeHistoryQuery(db, query, args)
+	if err != nil {
+		return nil, err
+	}
+
+	// イグノアリストでフィルタ（URLから抽出したドメインも考慮）
+	if len(filter.IgnoreDomains) > 0 {
+		var filtered []HistoryVisit
+		for _, v := range visits {
+			if !shouldIgnoreDomain(v.Domain, filter.IgnoreDomains) {
+				filtered = append(filtered, v)
+				if len(filtered) >= limit {
+					break
+				}
+			}
+		}
+		return filtered, nil
+	}
+
+	return visits, nil
 }
 
 // executeHistoryQuery は履歴クエリを実行して結果を返す
