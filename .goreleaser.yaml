@@ -1,0 +1,51 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - env:
+      - CGO_ENABLED=1
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    binary: hist
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+brews:
+  - name: hist
+    repository:
+      owner: nyasuto
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/nyasuto/hist"
+    description: "Safari history analysis CLI tool for macOS"
+    license: "MIT"
+    test: |
+      system "#{bin}/hist", "--help"
+    install: |
+      bin.install "hist"
