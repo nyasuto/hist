@@ -55,9 +55,10 @@ var templateFuncs = template.FuncMap{
 
 // WebServer はWebサーバーの構造体
 type WebServer struct {
-	db        *sql.DB
-	templates *template.Template
-	port      int
+	db            *sql.DB
+	templates     *template.Template
+	port          int
+	ignoreDomains []string
 }
 
 // NewWebServer は新しいWebServerを作成
@@ -67,10 +68,17 @@ func NewWebServer(db *sql.DB, port int) (*WebServer, error) {
 		return nil, fmt.Errorf("テンプレートの解析に失敗: %w", err)
 	}
 
+	// イグノアリストを読み込み
+	ignoreDomains, err := LoadIgnoreList()
+	if err != nil {
+		return nil, fmt.Errorf("イグノアリストの読み込みに失敗: %w", err)
+	}
+
 	return &WebServer{
-		db:        db,
-		templates: tmpl,
-		port:      port,
+		db:            db,
+		templates:     tmpl,
+		port:          port,
+		ignoreDomains: ignoreDomains,
 	}, nil
 }
 
@@ -119,13 +127,14 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
+	filter := SearchFilter{IgnoreDomains: s.ignoreDomains}
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	recentVisits, err := getRecentVisits(s.db, WebDashboardRecentVisits, SearchFilter{})
+	recentVisits, err := getRecentVisits(s.db, WebDashboardRecentVisits, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -175,7 +184,7 @@ func (s *WebServer) handleHistory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// フィルタ条件を取得
-	filter := SearchFilter{}
+	filter := SearchFilter{IgnoreDomains: s.ignoreDomains}
 	searchQuery := r.URL.Query().Get("search")
 	domainQuery := r.URL.Query().Get("domain")
 	fromQuery := r.URL.Query().Get("from")
@@ -252,13 +261,14 @@ func (s *WebServer) handleAPIStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
+	filter := SearchFilter{IgnoreDomains: s.ignoreDomains}
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	hourlyStats, err := getHourlyStats(s.db, SearchFilter{})
+	hourlyStats, err := getHourlyStats(s.db, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -374,7 +384,7 @@ func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	filter := SearchFilter{Domain: domainQuery}
+	filter := SearchFilter{Domain: domainQuery, IgnoreDomains: s.ignoreDomains}
 
 	hourlyStats, err := getHourlyStats(s.db, filter)
 	if err != nil {
@@ -388,7 +398,7 @@ func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	domainStats, err := getDomainStats(s.db, DefaultDomainLimit)
+	domainStats, err := getDomainStats(s.db, DefaultDomainLimit, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -417,7 +427,7 @@ func (s *WebServer) handleStatsPage(w http.ResponseWriter, r *http.Request) {
 // handleAPIStatsHourly は時間帯別統計をJSONで返す
 func (s *WebServer) handleAPIStatsHourly(w http.ResponseWriter, r *http.Request) {
 	domainQuery := r.URL.Query().Get("domain")
-	filter := SearchFilter{Domain: domainQuery}
+	filter := SearchFilter{Domain: domainQuery, IgnoreDomains: s.ignoreDomains}
 
 	hourlyStats, err := getHourlyStats(s.db, filter)
 	if err != nil {
@@ -441,7 +451,7 @@ func (s *WebServer) handleAPIStatsDaily(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	filter := SearchFilter{Domain: domainQuery}
+	filter := SearchFilter{Domain: domainQuery, IgnoreDomains: s.ignoreDomains}
 	dailyStats, err := getDailyStats(s.db, days, filter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

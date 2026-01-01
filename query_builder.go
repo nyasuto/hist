@@ -39,6 +39,17 @@ func (qb *QueryBuilder) WithDomain(domain string) *QueryBuilder {
 	return qb
 }
 
+// WithIgnoreDomains は除外ドメイン条件を追加
+func (qb *QueryBuilder) WithIgnoreDomains(domains []string) *QueryBuilder {
+	for _, d := range domains {
+		if d != "" {
+			qb.where.WriteString(` AND hi.domain_expansion != ?`)
+			qb.args = append(qb.args, d)
+		}
+	}
+	return qb
+}
+
 // WithDateRange は日付範囲フィルタ条件を追加
 func (qb *QueryBuilder) WithDateRange(from, to time.Time) *QueryBuilder {
 	if !from.IsZero() {
@@ -57,7 +68,8 @@ func (qb *QueryBuilder) WithDateRange(from, to time.Time) *QueryBuilder {
 func (qb *QueryBuilder) WithFilter(filter SearchFilter) *QueryBuilder {
 	return qb.WithKeyword(filter.Keyword).
 		WithDomain(filter.Domain).
-		WithDateRange(filter.From, filter.To)
+		WithDateRange(filter.From, filter.To).
+		WithIgnoreDomains(filter.IgnoreDomains)
 }
 
 // OrderByDesc はORDER BY DESC句を追加
