@@ -227,6 +227,58 @@ func TestQueryBuilderArgs(t *testing.T) {
 	}
 }
 
+func TestQueryBuilderWithIgnoreDomains(t *testing.T) {
+	baseQuery := "SELECT * FROM test WHERE 1=1"
+	qb := NewQueryBuilder(baseQuery).WithIgnoreDomains([]string{"youtube.com", "google.com"})
+
+	query, args := qb.Build()
+	expectedParts := []string{
+		"AND hi.domain_expansion != ?",
+	}
+	for _, part := range expectedParts {
+		if !containsString(query, part) {
+			t.Errorf("クエリに %q が含まれていない: %q", part, query)
+		}
+	}
+	if len(args) != 2 {
+		t.Errorf("期待値 2個の引数, 実際 %d個", len(args))
+	}
+	if args[0] != "youtube.com" || args[1] != "google.com" {
+		t.Errorf("期待値 [youtube.com, google.com], 実際 %v", args)
+	}
+}
+
+func TestQueryBuilderWithEmptyIgnoreDomains(t *testing.T) {
+	baseQuery := "SELECT * FROM test WHERE 1=1"
+	qb := NewQueryBuilder(baseQuery).WithIgnoreDomains([]string{})
+
+	query, args := qb.Build()
+	if query != baseQuery {
+		t.Errorf("空のイグノアリストでクエリが変更された: %q", query)
+	}
+	if len(args) != 0 {
+		t.Errorf("空のイグノアリストで引数が追加された: %v", args)
+	}
+}
+
+func TestQueryBuilderWithFilterIncludesIgnoreDomains(t *testing.T) {
+	baseQuery := "SELECT * FROM test WHERE 1=1"
+	filter := SearchFilter{
+		Keyword:       "test",
+		IgnoreDomains: []string{"youtube.com"},
+	}
+	qb := NewQueryBuilder(baseQuery).WithFilter(filter)
+
+	query, args := qb.Build()
+	if !containsString(query, "AND hi.domain_expansion != ?") {
+		t.Errorf("フィルタにイグノアドメインが適用されていない: %q", query)
+	}
+	// keyword: 2, ignoreDomains: 1
+	if len(args) != 3 {
+		t.Errorf("期待値 3個の引数, 実際 %d個", len(args))
+	}
+}
+
 // containsString はsがsubstrを含むかをチェック
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsStringHelper(s, substr))

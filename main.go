@@ -47,10 +47,11 @@ type DailyStats struct {
 
 // SearchFilter は検索・フィルタ条件を表す
 type SearchFilter struct {
-	Keyword string
-	Domain  string
-	From    time.Time
-	To      time.Time
+	Keyword       string
+	Domain        string
+	From          time.Time
+	To            time.Time
+	IgnoreDomains []string
 }
 
 // AnalysisResult は分析結果全体を表す
@@ -168,18 +169,24 @@ func executeHistoryQuery(db *sql.DB, query string, args []interface{}) ([]Histor
 	return visits, nil
 }
 
+// ドメイン統計用のベースクエリ
+const domainStatsBaseQuery = `
+	SELECT
+		COALESCE(hi.domain_expansion, 'その他') as domain,
+		SUM(hi.visit_count) as total_visits
+	FROM history_items hi
+	WHERE 1=1`
+
 // getDomainStats はドメイン別の訪問統計を取得
-func getDomainStats(db *sql.DB, limit int) ([]DomainStats, error) {
-	query := `
-		SELECT
-			COALESCE(domain_expansion, 'その他') as domain,
-			SUM(visit_count) as total_visits
-		FROM history_items
-		GROUP BY domain_expansion
-		ORDER BY total_visits DESC
-		LIMIT ?
-	`
-	rows, err := db.Query(query, limit)
+func getDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]DomainStats, error) {
+	qb := NewQueryBuilder(domainStatsBaseQuery).
+		WithIgnoreDomains(filter.IgnoreDomains)
+
+	query, args := qb.Build()
+	query += ` GROUP BY hi.domain_expansion ORDER BY total_visits DESC LIMIT ?`
+	args = append(args, limit)
+
+	rows, err := db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
 	}
@@ -477,7 +484,35 @@ func parseFlags() Config {
 	serve := flag.Bool("serve", false, "Webサーバーモードで起動")
 	port := flag.Int("port", DefaultWebPort, "Webサーバーのポート番号")
 
+	// イグノアリスト管理
+	ignoreAdd := flag.String("ignore-add", "", "ドメインをイグノアリストに追加")
+	ignoreRemove := flag.String("ignore-remove", "", "ドメインをイグノアリストから削除")
+	ignoreList := flag.Bool("ignore-list", false, "イグノアリストを表示")
+	noIgnore := flag.Bool("no-ignore", false, "イグノアリストを無視して実行")
+
 	flag.Parse()
+
+	// イグノアリスト管理コマンドの処理
+	if *ignoreList {
+		if err := PrintIgnoreList(); err != nil {
+			exitWithError("エラー: %v\n", err)
+		}
+		os.Exit(0)
+	}
+	if *ignoreAdd != "" {
+		if err := AddToIgnoreList(*ignoreAdd); err != nil {
+			exitWithError("エラー: %v\n", err)
+		}
+		fmt.Printf("イグノアリストに追加しました: %s\n", *ignoreAdd)
+		os.Exit(0)
+	}
+	if *ignoreRemove != "" {
+		if err := RemoveFromIgnoreList(*ignoreRemove); err != nil {
+			exitWithError("エラー: %v\n", err)
+		}
+		fmt.Printf("イグノアリストから削除しました: %s\n", *ignoreRemove)
+		os.Exit(0)
+	}
 
 	// フィルタ条件を構築
 	var filter SearchFilter
@@ -497,6 +532,15 @@ func parseFlags() Config {
 			exitWithError("エラー: 終了日の形式が不正です（YYYY-MM-DD）: %v\n", err)
 		}
 		filter.To = t
+	}
+
+	// イグノアリストを読み込み
+	if !*noIgnore {
+		ignoreDomains, err := LoadIgnoreList()
+		if err != nil {
+			exitWithError("エラー: イグノアリストの読み込みに失敗: %v\n", err)
+		}
+		filter.IgnoreDomains = ignoreDomains
 	}
 
 	// 表示オプションの正規化
@@ -581,7 +625,7 @@ func runCLIMode(db *sql.DB, config Config) error {
 	}
 
 	if config.ShowDomains {
-		result.DomainStats, err = getDomainStats(db, config.DomainLimit)
+		result.DomainStats, err = getDomainStats(db, config.DomainLimit, config.Filter)
 		if err != nil {
 			return fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
 		}
