@@ -96,7 +96,7 @@
                             <svg class="chevron w-4 h-4 text-gray-400 mr-2 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
                             </svg>
-                            <div class="w-40 truncate text-sm font-medium text-gray-700">{{.Domain}}</div>
+                            <a href="/domain?d={{.Domain}}" class="w-40 truncate text-sm font-medium text-gray-700 hover:text-blue-600" onclick="event.stopPropagation()">{{.Domain}}</a>
                             <div class="flex-1 mx-4">
                                 <div class="bg-gray-200 rounded-full h-4">
                                     <div class="bg-blue-500 rounded-full h-4 bar" style="width: {{percentage .TotalCount $.MaxDomainHits}}%"></div>
@@ -107,7 +107,7 @@
                         <div class="ml-6 mt-1 space-y-1 border-l-2 border-gray-200 pl-4">
                             {{range .Paths}}
                             <a href="/history?search={{.Path}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1 group/item">
-                                <div class="w-40 truncate text-sm text-gray-600 group-hover/item:text-blue-600 font-mono">{{.Path}}</div>
+                                <div class="w-40 truncate text-sm text-gray-600 group-hover/item:text-blue-600" title="{{.Path}}">{{if .Title}}{{.Title}}{{else}}{{.Path}}{{end}}</div>
                                 <div class="flex-1 mx-4">
                                     <div class="bg-gray-100 rounded-full h-3">
                                         <div class="bg-blue-400 rounded-full h-3 bar" style="width: {{percentage .VisitCount $.MaxDomainHits}}%"></div>
@@ -130,7 +130,7 @@
                         </div>
                     </details>
                     {{else}}
-                    <a href="/history?domain={{.Domain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1">
+                    <a href="/domain?d={{.Domain}}" class="flex items-center hover:bg-blue-50 rounded p-1 -ml-1">
                         <div class="w-6 mr-2"></div>
                         <div class="w-40 truncate text-sm text-gray-600 hover:text-blue-600">{{.Domain}}</div>
                         <div class="flex-1 mx-4">

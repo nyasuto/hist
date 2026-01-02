@@ -643,3 +643,85 @@ func TestGetDomainPathStatsWithPathLimit(t *testing.T) {
 		t.Errorf("OtherCount = %d, want %d", githubStats.OtherCount, expectedOther)
 	}
 }
+
+// TestGetContentStatsByDomain はドメイン別コンテンツ統計取得のテスト
+func TestGetContentStatsByDomain(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// テストデータを挿入
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(40, 'https://github.com/nyasuto/hist', 'github', 10),
+		(41, 'https://github.com/nyasuto/moz', 'github', 8),
+		(42, 'https://github.com/anthropics/claude', 'github', 5),
+		(43, 'https://google.com/search', 'google', 15);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(40, 40, ?, 'hist - Safari履歴分析'),
+		(41, 40, ?, 'hist - 最新版'),
+		(42, 41, ?, 'moz - KVストア'),
+		(43, 42, ?, 'Claude Code'),
+		(44, 43, ?, 'Google検索');
+	`, baseTime, baseTime+1000, baseTime+100, baseTime+200, baseTime+300)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	// github.comのコンテンツ統計を取得
+	contents, total, err := getContentStatsByDomain(db, "github.com", 10)
+	if err != nil {
+		t.Fatalf("getContentStatsByDomain失敗: %v", err)
+	}
+
+	// 3つのURLがある
+	if len(contents) != 3 {
+		t.Errorf("コンテンツ数 = %d, want 3", len(contents))
+	}
+
+	// 合計訪問数 (10+8+5=23)
+	if total != 23 {
+		t.Errorf("合計訪問数 = %d, want 23", total)
+	}
+
+	// 訪問数順にソートされている
+	if contents[0].VisitCount != 10 {
+		t.Errorf("最多訪問コンテンツの訪問数 = %d, want 10", contents[0].VisitCount)
+	}
+
+	// 最新のタイトルが取得されている（hist - 最新版）
+	if contents[0].Title != "hist - 最新版" {
+		t.Errorf("最新タイトル = %s, want 'hist - 最新版'", contents[0].Title)
+	}
+
+	// パスが正しく抽出されている
+	if contents[0].Path != "/nyasuto/hist" {
+		t.Errorf("パス = %s, want /nyasuto/hist", contents[0].Path)
+	}
+}
+
+// TestGetContentStatsByDomainEmpty は存在しないドメインのテスト
+func TestGetContentStatsByDomainEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+	insertTestData(t, db)
+
+	contents, total, err := getContentStatsByDomain(db, "notexist.com", 10)
+	if err != nil {
+		t.Fatalf("getContentStatsByDomain失敗: %v", err)
+	}
+
+	if len(contents) != 0 {
+		t.Errorf("存在しないドメインでコンテンツが返された: %d件", len(contents))
+	}
+
+	if total != 0 {
+		t.Errorf("存在しないドメインで合計が0でない: %d", total)
+	}
+}

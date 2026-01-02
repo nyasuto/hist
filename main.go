@@ -33,21 +33,6 @@ type DomainStats struct {
 	VisitCount int    `json:"visit_count"`
 }
 
-// PathStats はパス別の統計情報
-type PathStats struct {
-	Path       string `json:"path"`
-	VisitCount int    `json:"visit_count"`
-}
-
-// DomainPathStats はドメインとパス別の統計情報
-type DomainPathStats struct {
-	Domain     string      `json:"domain"`
-	TotalCount int         `json:"total_count"`
-	Paths      []PathStats `json:"paths"`
-	OtherCount int         `json:"other_count"`
-	HasPaths   bool        `json:"has_paths"`
-}
-
 // HourlyStats は時間帯別の統計情報
 type HourlyStats struct {
 	Hour       int `json:"hour"`
@@ -57,6 +42,30 @@ type HourlyStats struct {
 // DailyStats は日別の統計情報
 type DailyStats struct {
 	Date       string `json:"date"`
+	VisitCount int    `json:"visit_count"`
+}
+
+// PathStats はパス別の統計情報
+type PathStats struct {
+	Path       string `json:"path"`
+	Title      string `json:"title"`
+	VisitCount int    `json:"visit_count"`
+}
+
+// DomainPathStats はドメイン・パス別の統計情報
+type DomainPathStats struct {
+	Domain     string      `json:"domain"`
+	TotalCount int         `json:"total_count"`
+	Paths      []PathStats `json:"paths,omitempty"`
+	HasPaths   bool        `json:"has_paths"`
+	OtherCount int         `json:"other_count,omitempty"`
+}
+
+// ContentStats はコンテンツ（URL単位）の統計情報
+type ContentStats struct {
+	URL        string `json:"url"`
+	Title      string `json:"title"`
+	Path       string `json:"path"`
 	VisitCount int    `json:"visit_count"`
 }
 
@@ -162,90 +171,6 @@ func extractDomain(urlStr string) string {
 	}
 
 	return rest[:end]
-}
-
-// extractPath はURLからパス部分を抽出する
-// クエリパラメータ(?以降)とフラグメント(#以降)は除去
-// 例: "https://github.com/nyasuto/hist?tab=readme" → "/nyasuto/hist"
-func extractPath(urlStr string) string {
-	// プロトコル部分を探す
-	start := strings.Index(urlStr, "://")
-	if start == -1 {
-		return "/"
-	}
-	start += 3
-
-	// ホスト部分の終わりを探す（パスの開始位置）
-	rest := urlStr[start:]
-	pathStart := strings.Index(rest, "/")
-	if pathStart == -1 {
-		return "/" // パスなし
-	}
-
-	path := rest[pathStart:]
-
-	// クエリパラメータを除去
-	if idx := strings.Index(path, "?"); idx != -1 {
-		path = path[:idx]
-	}
-
-	// フラグメントを除去
-	if idx := strings.Index(path, "#"); idx != -1 {
-		path = path[:idx]
-	}
-
-	// 末尾のスラッシュを正規化（"/" 以外の場合は除去）
-	if len(path) > 1 && path[len(path)-1] == '/' {
-		path = path[:len(path)-1]
-	}
-
-	if path == "" {
-		return "/"
-	}
-
-	return path
-}
-
-// extractBaseDomain はFQDNからベースドメインを抽出する
-// 例: mail.google.com -> google.com, www.example.co.jp -> example.co.jp
-func extractBaseDomain(domain string) string {
-	if domain == "" {
-		return ""
-	}
-
-	// 特殊TLDのリスト（主要なものをカバー）
-	specialTLDs := []string{
-		".co.jp", ".ne.jp", ".or.jp", ".ac.jp", ".go.jp", ".gr.jp", ".ed.jp",
-		".com.au", ".net.au", ".org.au",
-		".co.uk", ".org.uk", ".ac.uk", ".gov.uk",
-		".com.br", ".net.br", ".org.br",
-		".co.nz", ".net.nz", ".org.nz",
-		".co.kr", ".or.kr", ".ne.kr",
-		".com.cn", ".net.cn", ".org.cn",
-		".com.tw", ".net.tw", ".org.tw",
-	}
-
-	// 特殊TLDをチェック
-	for _, tld := range specialTLDs {
-		if strings.HasSuffix(domain, tld) {
-			// TLD直前のドット位置を探す
-			prefix := domain[:len(domain)-len(tld)]
-			lastDot := strings.LastIndex(prefix, ".")
-			if lastDot == -1 {
-				return domain // すでにベースドメイン
-			}
-			return prefix[lastDot+1:] + tld
-		}
-	}
-
-	// 通常のTLD（.com, .org, .net, .jpなど）
-	parts := strings.Split(domain, ".")
-	if len(parts) <= 2 {
-		return domain // すでにベースドメイン
-	}
-
-	// 最後の2つのパートをベースドメインとする
-	return parts[len(parts)-2] + "." + parts[len(parts)-1]
 }
 
 // 履歴取得用のベースクエリ
@@ -369,95 +294,6 @@ func getDomainStats(db *sql.DB, limit int, filter SearchFilter) ([]DomainStats, 
 	return stats, nil
 }
 
-// getDomainPathStats はドメインとパス別の統計を取得
-func getDomainPathStats(db *sql.DB, limit int, pathLimit int, filter SearchFilter) ([]DomainPathStats, error) {
-	// 全てのURLとvisit_countを取得
-	query := `SELECT hi.url, hi.visit_count FROM history_items hi`
-
-	rows, err := db.Query(query)
-	if err != nil {
-		return nil, fmt.Errorf("ドメイン統計の取得に失敗: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	// ドメイン -> パス -> カウント のマップ
-	domainPathMap := make(map[string]map[string]int)
-
-	for rows.Next() {
-		var url string
-		var visitCount int
-		if err := rows.Scan(&url, &visitCount); err != nil {
-			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
-		}
-
-		domain := extractDomain(url)
-		if domain == "" {
-			continue
-		}
-
-		// イグノアリストチェック
-		if shouldIgnoreDomain(domain, filter.IgnoreDomains) {
-			continue
-		}
-
-		path := extractPath(url)
-
-		if domainPathMap[domain] == nil {
-			domainPathMap[domain] = make(map[string]int)
-		}
-		domainPathMap[domain][path] += visitCount
-	}
-
-	// 構造体に変換
-	var stats []DomainPathStats
-	for domain, paths := range domainPathMap {
-		totalCount := 0
-		var pathStats []PathStats
-
-		for path, count := range paths {
-			totalCount += count
-			pathStats = append(pathStats, PathStats{
-				Path:       path,
-				VisitCount: count,
-			})
-		}
-
-		// パスをカウント順にソート
-		sort.Slice(pathStats, func(i, j int) bool {
-			return pathStats[i].VisitCount > pathStats[j].VisitCount
-		})
-
-		// トップN件のパスのみ保持、残りは「その他」
-		otherCount := 0
-		if pathLimit > 0 && len(pathStats) > pathLimit {
-			for _, p := range pathStats[pathLimit:] {
-				otherCount += p.VisitCount
-			}
-			pathStats = pathStats[:pathLimit]
-		}
-
-		stats = append(stats, DomainPathStats{
-			Domain:     domain,
-			TotalCount: totalCount,
-			Paths:      pathStats,
-			OtherCount: otherCount,
-			HasPaths:   len(pathStats) > 1 || otherCount > 0,
-		})
-	}
-
-	// 合計カウント順にソート
-	sort.Slice(stats, func(i, j int) bool {
-		return stats[i].TotalCount > stats[j].TotalCount
-	})
-
-	// limitで制限
-	if limit > 0 && len(stats) > limit {
-		stats = stats[:limit]
-	}
-
-	return stats, nil
-}
-
 // shouldIgnoreDomain はドメインがイグノアリストに含まれるかチェック
 func shouldIgnoreDomain(domain string, ignoreDomains []string) bool {
 	for _, ignored := range ignoreDomains {
@@ -482,6 +318,243 @@ func shouldIgnoreDomain(domain string, ignoreDomains []string) bool {
 		}
 	}
 	return false
+}
+
+// extractPath はURLからパス部分を抽出（クエリパラメータは除外）
+func extractPath(urlStr string) string {
+	// プロトコル部分を探す
+	start := strings.Index(urlStr, "://")
+	if start == -1 {
+		return "/"
+	}
+	start += 3
+
+	// ホスト部分の終わり（パスの開始）を探す
+	rest := urlStr[start:]
+	pathStart := strings.Index(rest, "/")
+	if pathStart == -1 {
+		return "/"
+	}
+
+	pathPart := rest[pathStart:]
+
+	// クエリパラメータとフラグメントを除去
+	if idx := strings.Index(pathPart, "?"); idx != -1 {
+		pathPart = pathPart[:idx]
+	}
+	if idx := strings.Index(pathPart, "#"); idx != -1 {
+		pathPart = pathPart[:idx]
+	}
+
+	// 末尾のスラッシュを除去（ルートパスは除く）
+	if len(pathPart) > 1 && pathPart[len(pathPart)-1] == '/' {
+		pathPart = pathPart[:len(pathPart)-1]
+	}
+
+	return pathPart
+}
+
+// 特殊なTLD（複合TLD）のリスト
+var specialTLDs = []string{
+	"co.jp", "or.jp", "ne.jp", "ac.jp", "go.jp", "gr.jp", "ed.jp",
+	"co.uk", "org.uk", "gov.uk", "ac.uk",
+	"com.au", "net.au", "org.au", "gov.au",
+	"com.br", "org.br", "gov.br", "net.br",
+}
+
+// extractBaseDomain はベースドメイン（サブドメインを除去）を抽出
+func extractBaseDomain(domain string) string {
+	if domain == "" {
+		return ""
+	}
+
+	parts := strings.Split(domain, ".")
+	if len(parts) <= 2 {
+		return domain
+	}
+
+	// 特殊TLDをチェック
+	for _, tld := range specialTLDs {
+		suffix := "." + tld
+		if strings.HasSuffix(domain, suffix) {
+			// 特殊TLDの前の部分を含める
+			tldParts := strings.Split(tld, ".")
+			if len(parts) > len(tldParts) {
+				return strings.Join(parts[len(parts)-len(tldParts)-1:], ".")
+			}
+			return domain
+		}
+	}
+
+	// 通常のドメイン: 最後の2つの部分を返す
+	return strings.Join(parts[len(parts)-2:], ".")
+}
+
+// getDomainPathStats はドメイン・パス別の訪問統計を取得
+func getDomainPathStats(db *sql.DB, limit, pathLimit int, filter SearchFilter) ([]DomainPathStats, error) {
+	// URLとvisit_count、最新タイトルを取得
+	query := `
+		SELECT hi.url, hi.visit_count,
+			COALESCE((SELECT hv.title FROM history_visits hv
+				WHERE hv.history_item = hi.id
+				ORDER BY hv.visit_time DESC LIMIT 1), '') as latest_title
+		FROM history_items hi`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("ドメイン・パス統計の取得に失敗: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	// ドメインごとにパス統計を集計
+	type pathInfo struct {
+		title      string
+		visitCount int
+	}
+	domainPaths := make(map[string]map[string]*pathInfo)
+	domainTotals := make(map[string]int)
+
+	for rows.Next() {
+		var url string
+		var visitCount int
+		var title string
+		if err := rows.Scan(&url, &visitCount, &title); err != nil {
+			return nil, fmt.Errorf("行の読み取りに失敗: %w", err)
+		}
+
+		domain := extractDomain(url)
+		if domain == "" {
+			continue
+		}
+		baseDomain := extractBaseDomain(domain)
+
+		// イグノアリストチェック
+		if shouldIgnoreDomain(baseDomain, filter.IgnoreDomains) {
+			continue
+		}
+
+		path := extractPath(url)
+
+		if domainPaths[baseDomain] == nil {
+			domainPaths[baseDomain] = make(map[string]*pathInfo)
+		}
+		if domainPaths[baseDomain][path] == nil {
+			domainPaths[baseDomain][path] = &pathInfo{title: title}
+		}
+		domainPaths[baseDomain][path].visitCount += visitCount
+		// タイトルが空でなければ更新
+		if title != "" {
+			domainPaths[baseDomain][path].title = title
+		}
+		domainTotals[baseDomain] += visitCount
+	}
+
+	// DomainPathStats形式に変換
+	var stats []DomainPathStats
+	for domain, paths := range domainPaths {
+		ds := DomainPathStats{
+			Domain:     domain,
+			TotalCount: domainTotals[domain],
+			HasPaths:   len(paths) > 1,
+		}
+
+		// パスをスライスに変換してソート
+		var pathStats []PathStats
+		for path, info := range paths {
+			pathStats = append(pathStats, PathStats{
+				Path:       path,
+				Title:      info.title,
+				VisitCount: info.visitCount,
+			})
+		}
+		sort.Slice(pathStats, func(i, j int) bool {
+			return pathStats[i].VisitCount > pathStats[j].VisitCount
+		})
+
+		// pathLimit件に制限
+		if len(pathStats) > pathLimit {
+			for _, ps := range pathStats[pathLimit:] {
+				ds.OtherCount += ps.VisitCount
+			}
+			pathStats = pathStats[:pathLimit]
+		}
+
+		ds.Paths = pathStats
+		stats = append(stats, ds)
+	}
+
+	// TotalCountでソート
+	sort.Slice(stats, func(i, j int) bool {
+		return stats[i].TotalCount > stats[j].TotalCount
+	})
+
+	// limitで制限
+	if limit > 0 && len(stats) > limit {
+		stats = stats[:limit]
+	}
+
+	return stats, nil
+}
+
+// getContentStatsByDomain は指定ドメインのコンテンツ統計を取得
+func getContentStatsByDomain(db *sql.DB, domain string, limit int) ([]ContentStats, int, error) {
+	// URLとvisit_count、最新タイトルを取得
+	query := `
+		SELECT hi.url, hi.visit_count,
+			COALESCE((SELECT hv.title FROM history_visits hv
+				WHERE hv.history_item = hi.id
+				ORDER BY hv.visit_time DESC LIMIT 1), '') as latest_title
+		FROM history_items hi`
+
+	rows, err := db.Query(query)
+	if err != nil {
+		return nil, 0, fmt.Errorf("コンテンツ統計の取得に失敗: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var contents []ContentStats
+	total := 0
+
+	for rows.Next() {
+		var url string
+		var visitCount int
+		var title string
+		if err := rows.Scan(&url, &visitCount, &title); err != nil {
+			return nil, 0, fmt.Errorf("行の読み取りに失敗: %w", err)
+		}
+
+		urlDomain := extractDomain(url)
+		if urlDomain == "" {
+			continue
+		}
+		baseDomain := extractBaseDomain(urlDomain)
+
+		// 指定ドメインのみ
+		if baseDomain != domain {
+			continue
+		}
+
+		path := extractPath(url)
+		contents = append(contents, ContentStats{
+			URL:        url,
+			Title:      title,
+			Path:       path,
+			VisitCount: visitCount,
+		})
+		total += visitCount
+	}
+
+	// 訪問数でソート
+	sort.Slice(contents, func(i, j int) bool {
+		return contents[i].VisitCount > contents[j].VisitCount
+	})
+
+	// limitで制限
+	if limit > 0 && len(contents) > limit {
+		contents = contents[:limit]
+	}
+
+	return contents, total, nil
 }
 
 // 訪問時刻取得用のベースクエリ

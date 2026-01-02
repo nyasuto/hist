@@ -88,6 +88,7 @@ func (s *WebServer) Start() error {
 
 	// ページハンドラー
 	mux.HandleFunc("/", s.handleDashboard)
+	mux.HandleFunc("/domain", s.handleDomainDetail)
 	mux.HandleFunc("/history", s.handleHistory)
 	mux.HandleFunc("/stats", s.handleStatsPage)
 
@@ -112,6 +113,14 @@ type DashboardData struct {
 	DomainPathStats []DomainPathStats
 	RecentVisits    []HistoryVisit
 	MaxDomainHits   int
+}
+
+// DomainDetailData はドメイン詳細ページ用のデータ
+type DomainDetailData struct {
+	Domain      string
+	TotalVisits int
+	Contents    []ContentStats
+	MaxHits     int
 }
 
 // handleDashboard はダッシュボードページを表示
@@ -153,6 +162,37 @@ func (s *WebServer) handleDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.templates.ExecuteTemplate(w, "dashboard.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+// handleDomainDetail はドメイン詳細ページを表示
+func (s *WebServer) handleDomainDetail(w http.ResponseWriter, r *http.Request) {
+	domain := r.URL.Query().Get("d")
+	if domain == "" {
+		http.Redirect(w, r, "/", http.StatusFound)
+		return
+	}
+
+	contents, total, err := getContentStatsByDomain(s.db, domain, 100)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	maxHits := 0
+	if len(contents) > 0 {
+		maxHits = contents[0].VisitCount
+	}
+
+	data := DomainDetailData{
+		Domain:      domain,
+		TotalVisits: total,
+		Contents:    contents,
+		MaxHits:     maxHits,
+	}
+
+	if err := s.templates.ExecuteTemplate(w, "domain.html", data); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
 }
