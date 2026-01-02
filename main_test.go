@@ -416,3 +416,368 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
+// TestExtractPath はURLからパス抽出のテスト
+func TestExtractPath(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"通常のパス", "https://github.com/nyasuto/hist", "/nyasuto/hist"},
+		{"クエリパラメータ付き", "https://github.com/nyasuto/hist?tab=readme", "/nyasuto/hist"},
+		{"フラグメント付き", "https://github.com/nyasuto/hist#section", "/nyasuto/hist"},
+		{"両方付き", "https://github.com/nyasuto/hist?foo=bar#section", "/nyasuto/hist"},
+		{"パスなし", "https://example.com", "/"},
+		{"パスなし（スラッシュ付き）", "https://example.com/", "/"},
+		{"ルートパス", "https://example.com/", "/"},
+		{"末尾スラッシュあり", "https://example.com/path/to/page/", "/path/to/page"},
+		{"深いパス", "https://site.com/a/b/c/d/e", "/a/b/c/d/e"},
+		{"ポート付きURL", "https://localhost:8080/api/v1", "/api/v1"},
+		{"プロトコルなし", "example.com/path", "/"},
+		{"空文字列", "", "/"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractPath(tt.url)
+			if got != tt.want {
+				t.Errorf("extractPath(%q) = %q, want %q", tt.url, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestExtractBaseDomain はベースドメイン抽出のテスト
+func TestExtractBaseDomain(t *testing.T) {
+	tests := []struct {
+		name   string
+		domain string
+		want   string
+	}{
+		{"シンプルなドメイン", "example.com", "example.com"},
+		{"www付き", "www.example.com", "example.com"},
+		{"サブドメイン付き", "mail.google.com", "google.com"},
+		{"複数サブドメイン", "api.v2.example.com", "example.com"},
+		{"日本の特殊TLD", "www.example.co.jp", "example.co.jp"},
+		{"イギリスの特殊TLD", "shop.example.co.uk", "example.co.uk"},
+		{"オーストラリアの特殊TLD", "api.example.com.au", "example.com.au"},
+		{"ブラジルの特殊TLD", "www.example.com.br", "example.com.br"},
+		{"アカデミックドメイン", "lib.example.ac.jp", "example.ac.jp"},
+		{"政府ドメイン", "portal.example.gov", "example.gov"},
+		{"組織ドメイン", "www.example.org", "example.org"},
+		{"or.jpドメイン", "www.example.or.jp", "example.or.jp"},
+		{"ne.jpドメイン", "api.example.ne.jp", "example.ne.jp"},
+		{"短いドメイン", "a.com", "a.com"},
+		{"2文字ドメイン", "io.com", "io.com"},
+		{"TLDのみ", "com", "com"},
+		{"空文字列", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractBaseDomain(tt.domain)
+			if got != tt.want {
+				t.Errorf("extractBaseDomain(%q) = %q, want %q", tt.domain, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestGetDomainPathStats はドメイン・パス別統計取得のテスト
+func TestGetDomainPathStats(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// 同じドメインに複数パスを持つテストデータを挿入
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(10, 'https://github.com/nyasuto/hist', 'github', 10),
+		(11, 'https://github.com/nyasuto/moz', 'github', 8),
+		(12, 'https://github.com/anthropics/claude', 'github', 5),
+		(13, 'https://google.com/search', 'google', 15),
+		(14, 'https://google.com/maps', 'google', 7);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(10, 10, ?, 'hist repo'),
+		(11, 11, ?, 'moz repo'),
+		(12, 12, ?, 'claude repo'),
+		(13, 13, ?, 'Google Search'),
+		(14, 14, ?, 'Google Maps');
+	`, baseTime, baseTime+100, baseTime+200, baseTime+300, baseTime+400)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	stats, err := getDomainPathStats(db, 10, 5, SearchFilter{})
+	if err != nil {
+		t.Fatalf("getDomainPathStats失敗: %v", err)
+	}
+
+	// github.com と google.com の2つのドメインがある
+	if len(stats) < 2 {
+		t.Errorf("getDomainPathStats() returned %d items, want at least 2", len(stats))
+	}
+
+	// 最初のエントリはgithub.com（visit_count合計: 10+8+5=23）
+	if len(stats) > 0 && stats[0].Domain != "github.com" {
+		t.Errorf("最多訪問ドメインが期待と異なる: got %s, want github.com", stats[0].Domain)
+	}
+
+	// github.comのパスを確認
+	var githubStats *DomainPathStats
+	for i := range stats {
+		if stats[i].Domain == "github.com" {
+			githubStats = &stats[i]
+			break
+		}
+	}
+
+	if githubStats != nil {
+		if !githubStats.HasPaths {
+			t.Error("github.comには複数パスがあるはず")
+		}
+		if len(githubStats.Paths) != 3 {
+			t.Errorf("github.comのパス数 = %d, want 3", len(githubStats.Paths))
+		}
+		// 合計カウント（10+8+5=23）
+		if githubStats.TotalCount != 23 {
+			t.Errorf("github.comの合計訪問数 = %d, want 23", githubStats.TotalCount)
+		}
+		// 最初のパスは訪問数が最も多いもの
+		if githubStats.Paths[0].Path != "/nyasuto/hist" {
+			t.Errorf("最多訪問パスが期待と異なる: got %s, want /nyasuto/hist", githubStats.Paths[0].Path)
+		}
+	} else {
+		t.Error("github.comの統計が見つからない")
+	}
+}
+
+// TestGetDomainPathStatsWithIgnoreList はイグノアリスト付きドメイン・パス統計のテスト
+func TestGetDomainPathStatsWithIgnoreList(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(20, 'https://google.com/search', 'google', 10),
+		(21, 'https://github.com/repo', 'github', 15);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(20, 20, ?, 'Google Search'),
+		(21, 21, ?, 'GitHub Repo');
+	`, baseTime, baseTime+100)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	// googleをイグノア
+	filter := SearchFilter{IgnoreDomains: []string{"google"}}
+	stats, err := getDomainPathStats(db, 10, 5, filter)
+	if err != nil {
+		t.Fatalf("getDomainPathStats失敗: %v", err)
+	}
+
+	// google.comが除外されているので1件のみ
+	if len(stats) != 1 {
+		t.Errorf("getDomainPathStats with ignore returned %d items, want 1", len(stats))
+	}
+
+	if len(stats) > 0 && stats[0].Domain != "github.com" {
+		t.Errorf("残るドメインが期待と異なる: got %s, want github.com", stats[0].Domain)
+	}
+}
+
+// TestGetDomainPathStatsWithPathLimit はパス数制限のテスト
+func TestGetDomainPathStatsWithPathLimit(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// 多数のパスを持つテストデータ
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(30, 'https://github.com/path1', 'github', 10),
+		(31, 'https://github.com/path2', 'github', 9),
+		(32, 'https://github.com/path3', 'github', 8),
+		(33, 'https://github.com/path4', 'github', 7),
+		(34, 'https://github.com/path5', 'github', 6),
+		(35, 'https://github.com/path6', 'github', 5),
+		(36, 'https://github.com/path7', 'github', 4);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	// pathLimit=3でテスト
+	stats, err := getDomainPathStats(db, 10, 3, SearchFilter{})
+	if err != nil {
+		t.Fatalf("getDomainPathStats失敗: %v", err)
+	}
+
+	if len(stats) == 0 {
+		t.Fatal("統計が取得できていない")
+	}
+
+	githubStats := stats[0]
+
+	// パスは3件のみ
+	if len(githubStats.Paths) != 3 {
+		t.Errorf("パス数 = %d, want 3", len(githubStats.Paths))
+	}
+
+	// OtherCountは残りの合計（7+6+5+4 = 22）
+	expectedOther := 7 + 6 + 5 + 4
+	if githubStats.OtherCount != expectedOther {
+		t.Errorf("OtherCount = %d, want %d", githubStats.OtherCount, expectedOther)
+	}
+}
+
+// TestGetContentStatsByDomain はドメイン別コンテンツ統計取得のテスト
+func TestGetContentStatsByDomain(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// テストデータを挿入
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(40, 'https://github.com/nyasuto/hist', 'github', 10),
+		(41, 'https://github.com/nyasuto/moz', 'github', 8),
+		(42, 'https://github.com/anthropics/claude', 'github', 5),
+		(43, 'https://google.com/search', 'google', 15);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(40, 40, ?, 'hist - Safari履歴分析'),
+		(41, 40, ?, 'hist - 最新版'),
+		(42, 41, ?, 'moz - KVストア'),
+		(43, 42, ?, 'Claude Code'),
+		(44, 43, ?, 'Google検索');
+	`, baseTime, baseTime+1000, baseTime+100, baseTime+200, baseTime+300)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	// github.comのコンテンツ統計を取得
+	contents, total, err := getContentStatsByDomain(db, "github.com", 10)
+	if err != nil {
+		t.Fatalf("getContentStatsByDomain失敗: %v", err)
+	}
+
+	// 3つのURLがある
+	if len(contents) != 3 {
+		t.Errorf("コンテンツ数 = %d, want 3", len(contents))
+	}
+
+	// 合計訪問数 (10+8+5=23)
+	if total != 23 {
+		t.Errorf("合計訪問数 = %d, want 23", total)
+	}
+
+	// 訪問数順にソートされている
+	if contents[0].VisitCount != 10 {
+		t.Errorf("最多訪問コンテンツの訪問数 = %d, want 10", contents[0].VisitCount)
+	}
+
+	// 最新のタイトルが取得されている（hist - 最新版）
+	if contents[0].Title != "hist - 最新版" {
+		t.Errorf("最新タイトル = %s, want 'hist - 最新版'", contents[0].Title)
+	}
+
+	// パスが正しく抽出されている
+	if contents[0].Path != "/nyasuto/hist" {
+		t.Errorf("パス = %s, want /nyasuto/hist", contents[0].Path)
+	}
+}
+
+// TestGetContentStatsByDomainEmpty は存在しないドメインのテスト
+func TestGetContentStatsByDomainEmpty(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+	insertTestData(t, db)
+
+	contents, total, err := getContentStatsByDomain(db, "notexist.com", 10)
+	if err != nil {
+		t.Fatalf("getContentStatsByDomain失敗: %v", err)
+	}
+
+	if len(contents) != 0 {
+		t.Errorf("存在しないドメインでコンテンツが返された: %d件", len(contents))
+	}
+
+	if total != 0 {
+		t.Errorf("存在しないドメインで合計が0でない: %d", total)
+	}
+}
+
+// TestGetDomainPathStatsWithTitle はタイトル取得のテスト
+func TestGetDomainPathStatsWithTitle(t *testing.T) {
+	db := setupTestDB(t)
+	defer func() { _ = db.Close() }()
+
+	// テストデータを挿入
+	_, err := db.Exec(`
+		INSERT INTO history_items (id, url, domain_expansion, visit_count) VALUES
+		(50, 'https://github.com/test/repo', 'github', 10);
+	`)
+	if err != nil {
+		t.Fatalf("history_items挿入に失敗: %v", err)
+	}
+
+	baseTime := 757418400.0
+	_, err = db.Exec(`
+		INSERT INTO history_visits (id, history_item, visit_time, title) VALUES
+		(50, 50, ?, '古いタイトル'),
+		(51, 50, ?, '新しいタイトル');
+	`, baseTime, baseTime+1000)
+	if err != nil {
+		t.Fatalf("history_visits挿入に失敗: %v", err)
+	}
+
+	stats, err := getDomainPathStats(db, 10, 5, SearchFilter{})
+	if err != nil {
+		t.Fatalf("getDomainPathStats失敗: %v", err)
+	}
+
+	if len(stats) == 0 {
+		t.Fatal("統計が取得できていない")
+	}
+
+	// github.comを探す
+	var githubStats *DomainPathStats
+	for i := range stats {
+		if stats[i].Domain == "github.com" {
+			githubStats = &stats[i]
+			break
+		}
+	}
+
+	if githubStats == nil {
+		t.Fatal("github.comの統計が見つからない")
+	}
+
+	if len(githubStats.Paths) == 0 {
+		t.Fatal("パスが取得できていない")
+	}
+
+	// 最新のタイトルが取得されている
+	if githubStats.Paths[0].Title != "新しいタイトル" {
+		t.Errorf("タイトル = %s, want '新しいタイトル'", githubStats.Paths[0].Title)
+	}
+}
