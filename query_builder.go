@@ -31,10 +31,17 @@ func (qb *QueryBuilder) WithKeyword(keyword string) *QueryBuilder {
 }
 
 // WithDomain はドメインフィルタ条件を追加
+// domain_expansionとの完全一致、またはURLから抽出したドメインとの一致をチェック
 func (qb *QueryBuilder) WithDomain(domain string) *QueryBuilder {
 	if domain != "" {
-		qb.where.WriteString(` AND hi.domain_expansion = ?`)
-		qb.args = append(qb.args, domain)
+		// domain_expansionとの一致、またはURLのホスト部分との一致
+		// 例: "learn.microsoft.com" は domain_expansion="learn.microsoft" または
+		//     URL="https://learn.microsoft.com/..." にマッチ
+		// パスなしURL（https://example.com）とパスありURL（https://example.com/path）の両方に対応
+		qb.where.WriteString(` AND (hi.domain_expansion = ? OR hi.url LIKE ? OR hi.url LIKE ?)`)
+		urlPatternWithPath := "%://" + domain + "/%"
+		urlPatternWithoutPath := "%://" + domain
+		qb.args = append(qb.args, domain, urlPatternWithPath, urlPatternWithoutPath)
 	}
 	return qb
 }

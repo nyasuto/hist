@@ -16,6 +16,8 @@ const (
 	DefaultHistoryLimit = 20
 	// DefaultDomainLimit はドメイン統計のデフォルト表示件数
 	DefaultDomainLimit = 10
+	// DefaultPathLimit は各ドメイン内で表示するパス数
+	DefaultPathLimit = 5
 	// DefaultDailyDays は日別統計のデフォルト日数
 	DefaultDailyDays = 7
 	// DefaultWebPort はWebサーバーのデフォルトポート
