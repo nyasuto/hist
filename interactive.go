@@ -297,10 +297,10 @@ func (m interactiveModel) renderDetail() string {
 		title = "(タイトルなし)"
 	}
 
-	b.WriteString(fmt.Sprintf("タイトル: %s\n\n", title))
-	b.WriteString(fmt.Sprintf("URL: %s\n\n", v.URL))
-	b.WriteString(fmt.Sprintf("ドメイン: %s\n\n", v.Domain))
-	b.WriteString(fmt.Sprintf("訪問日時: %s\n\n", v.VisitTime.Format(TimeFormatFull)))
+	fmt.Fprintf(&b, "タイトル: %s\n\n", title)
+	fmt.Fprintf(&b, "URL: %s\n\n", v.URL)
+	fmt.Fprintf(&b, "ドメイン: %s\n\n", v.Domain)
+	fmt.Fprintf(&b, "訪問日時: %s\n\n", v.VisitTime.Format(TimeFormatFull))
 
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
