@@ -211,7 +211,7 @@ func (m interactiveModel) View() string {
 
 	// エラー表示
 	if m.err != nil {
-		b.WriteString(fmt.Sprintf("エラー: %v\n", m.err))
+		fmt.Fprintf(&b, "エラー: %v\n", m.err)
 		return b.String()
 	}
 
@@ -226,7 +226,7 @@ func (m interactiveModel) View() string {
 		b.WriteString(m.searchInput)
 		b.WriteString("_\n\n")
 	} else if m.filter.Keyword != "" {
-		b.WriteString(fmt.Sprintf("検索中: %q (Escでクリア)\n\n", m.filter.Keyword))
+		fmt.Fprintf(&b, "検索中: %q (Escでクリア)\n\n", m.filter.Keyword)
 	}
 
 	// 履歴一覧
@@ -275,7 +275,7 @@ func (m interactiveModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(strings.Repeat("─", min(SeparatorWidth, m.windowWidth)))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("総訪問数: %d\n", m.totalVisits))
+	fmt.Fprintf(&b, "総訪問数: %d\n", m.totalVisits)
 	b.WriteString(helpStyle.Render("↑/↓:移動  Enter:詳細  /:検索  r:更新  q:終了"))
 	b.WriteString("\n")
 
